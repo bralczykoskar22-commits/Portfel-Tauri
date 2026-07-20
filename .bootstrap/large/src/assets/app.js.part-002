@@ -1,0 +1,241 @@
+th(month) {
+    var opening = yearBalance();
+    var available = totalOpeningAvailable();
+    var reserve = number(opening.reserve);
+    yearTransactions().forEach(function (transaction) {
+      var date = dateFromISO(transaction.date);
+      if (date && date.getMonth() < month) {
+        var delta = impact(transaction);
+        available += delta.available;
+        reserve += delta.reserve;
+      }
+    });
+    return { available: available, reserve: reserve };
+  }
+
+  function balancesAtYearEnd() {
+    var opening = yearBalance();
+    var available = totalOpeningAvailable();
+    var reserve = number(opening.reserve);
+    yearTransactions().forEach(function (transaction) {
+      var delta = impact(transaction);
+      available += delta.available;
+      reserve += delta.reserve;
+    });
+    return { available: available, reserve: reserve };
+  }
+
+  function targetPaid(type, id, excludingId) {
+    return data.transactions.reduce(function (sum, transaction) {
+      if (transaction.id === excludingId) return sum;
+      if (transaction.type === type && transaction.targetId === id) return sum + number(transaction.amount);
+      return sum;
+    }, 0);
+  }
+
+  function goalSaved(goal, excludingId) {
+    return Math.max(data.transactions.reduce(function (sum, transaction) {
+      if (transaction.id === excludingId || transaction.targetId !== goal.id) return sum;
+      if (transaction.type === "goal") return sum + number(transaction.amount);
+      if (transaction.type === "goal_withdraw") return sum - number(transaction.amount);
+      return sum;
+    }, 0), 0);
+  }
+
+  function goalDeposited(goal) {
+    return targetPaid("goal", goal.id);
+  }
+
+  function goalWithdrawn(goal) {
+    return targetPaid("goal_withdraw", goal.id);
+  }
+
+  function debtPaid(debt, excludingId) {
+    return targetPaid("debt", debt.id, excludingId);
+  }
+
+  function goalRemaining(goal, excludingId) {
+    return Math.max(number(goal.target) - goalSaved(goal, excludingId), 0);
+  }
+
+  function debtLedger(debt, excludingId) {
+    var balance = Math.max(0, number(debt.total));
+    var interest = 0;
+    var rate = modules().interest && debt.interestEnabled ? Math.max(0, number(debt.apr)) / 1200 : 0;
+    var created = dateFromISO(String(debt.createdAt || "").slice(0, 10)) || startOfToday();
+    var cursor = created;
+    var payments = sortedTransactions(data.transactions.filter(function (transaction) {
+      return transaction.id !== excludingId && transaction.type === "debt" && transaction.targetId === debt.id;
+    }));
+    payments.forEach(function (payment) {
+      var date = dateFromISO(payment.date) || cursor;
+      var periods = Math.max(0, (date.getFullYear() - cursor.getFullYear()) * 12 + date.getMonth() - cursor.getMonth());
+      if (rate > 0 && periods > 0 && balance > 0) {
+        var before = balance;
+        balance *= Math.pow(1 + rate, periods);
+        interest += balance - before;
+      }
+      balance = Math.max(0, balance - number(payment.amount));
+      if (date.getTime() > cursor.getTime()) cursor = date;
+    });
+    var today = startOfToday();
+    var finalPeriods = Math.max(0, (today.getFullYear() - cursor.getFullYear()) * 12 + today.getMonth() - cursor.getMonth());
+    if (rate > 0 && finalPeriods > 0 && balance > 0) {
+      var current = balance;
+      balance *= Math.pow(1 + rate, finalPeriods);
+      interest += balance - current;
+    }
+    return { balance: Math.max(balance, 0), accruedInterest: Math.max(interest, 0) };
+  }
+
+  function debtRemaining(debt, excludingId) {
+    return debtLedger(debt, excludingId).balance;
+  }
+
+  function monthDistance(start, end) {
+    return Math.max(1, (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth() + 1);
+  }
+
+  function goalPlan(goal, referenceDate) {
+    var today = referenceDate || startOfToday();
+    var deadline = dateFromISO(goal.deadline);
+    var start = dateFromISO(goal.startDate) || today;
+    var saved = goalSaved(goal);
+    var remaining = goalRemaining(goal);
+    var dates = deadline ? goalScheduleDates(goal, today, deadline).filter(function (date) {
+      var key = isoDate(date);
+      return !data.transactions.some(function (transaction) {
+        return transaction.type === "goal" && transaction.targetId === goal.id && transaction.scheduledDate === key;
+      });
+    }) : [];
+    var recommended = dates.length ? remaining / dates.length : remaining;
+    var expected = 0;
+    if (deadline && deadline.getTime() > start.getTime()) {
+      var elapsed = Math.max(0, Math.min(today.getTime() - start.getTime(), deadline.getTime() - start.getTime()));
+      expected = number(goal.target) * elapsed / (deadline.getTime() - start.getTime());
+    } else if (deadline && today.getTime() >= deadline.getTime()) {
+      expected = number(goal.target);
+    }
+    var difference = saved - expected;
+    var tolerance = Math.max(number(goal.target) * .03, 50);
+    var paceText = "Zgodnie z planem";
+    var paceClass = "is-on-track";
+    if (difference > tolerance) {
+      paceText = "Przed planem o " + money(difference);
+      paceClass = "is-ahead";
+    } else if (difference < -tolerance) {
+      paceText = "Za planem o " + money(Math.abs(difference));
+      paceClass = "is-behind";
+    }
+
+    var projected = null;
+    if (remaining <= 0) {
+      projected = today;
+    } else if (saved > 0) {
+      var elapsedPeriods = goal.cadence === "weekly"
+        ? Math.max(1, Math.ceil((today.getTime() - start.getTime()) / 604800000))
+        : monthDistance(start, today);
+      var average = saved / elapsedPeriods;
+      if (average > 0) {
+        var periodsNeeded = Math.ceil(remaining / average);
+        projected = goal.cadence === "weekly" ? addDays(today, periodsNeeded * 7) : addMonths(today, periodsNeeded);
+      }
+    } else if (dates.length && deadline) {
+      projected = deadline;
+    }
+    var cap = number(goal.maxContribution);
+    var impossible = remaining > 0 && (!deadline || !dates.length || (cap > 0 && recommended > cap + .0001));
+    return {
+      saved: saved,
+      deposited: goalDeposited(goal),
+      withdrawn: goalWithdrawn(goal),
+      remaining: remaining,
+      dates: dates,
+      recommended: recommended,
+      nextDate: dates[0] || null,
+      expected: expected,
+      difference: difference,
+      paceText: paceText,
+      paceClass: paceClass,
+      projected: projected,
+      impossible: impossible,
+      capExceeded: cap > 0 && recommended > cap + .0001
+    };
+  }
+
+  function debtPlan(debt, referenceDate) {
+    var today = referenceDate || startOfToday();
+    var deadline = dateFromISO(debt.deadline);
+    var ledger = debtLedger(debt);
+    var remaining = ledger.balance;
+    var dates = deadline ? debtScheduleDates(debt, today, deadline).filter(function (date) {
+      var key = isoDate(date);
+      return !data.transactions.some(function (transaction) {
+        return transaction.type === "debt" && transaction.targetId === debt.id && transaction.scheduledDate === key;
+      });
+    }) : [];
+    var periods = dates.length;
+    var monthlyRate = modules().interest && debt.interestEnabled ? Math.max(0, number(debt.apr)) / 1200 : 0;
+    var required = remaining;
+    if (periods > 0) {
+      required = monthlyRate > 0
+        ? remaining * monthlyRate / (1 - Math.pow(1 + monthlyRate, -periods))
+        : remaining / periods;
+    }
+    var recommended = Math.max(required, number(debt.minimumPayment));
+    if (remaining <= 0) recommended = 0;
+
+    var simulatedBalance = remaining;
+    var interest = 0;
+    var projected = null;
+    var cursor = dates[0] || clampDate(today.getFullYear(), today.getMonth() + 1, debt.paymentDay);
+    if (recommended > 0) {
+      for (var index = 0; index < 600 && simulatedBalance > .005; index += 1) {
+        var addedInterest = simulatedBalance * monthlyRate;
+        interest += addedInterest;
+        simulatedBalance += addedInterest;
+        simulatedBalance -= Math.min(recommended, simulatedBalance);
+        projected = cursor;
+        cursor = clampDate(cursor.getFullYear(), cursor.getMonth() + 1, debt.paymentDay);
+      }
+    }
+    return {
+      remaining: remaining,
+      paid: debtPaid(debt),
+      dates: dates,
+      payments: periods,
+      recommended: recommended,
+      nextDate: dates[0] || null,
+      projected: projected,
+      estimatedInterest: interest,
+      accruedInterest: ledger.accruedInterest,
+      impossible: remaining > 0 && (!deadline || !periods),
+      apr: monthlyRate > 0 ? Math.max(0, number(debt.apr)) : 0
+    };
+  }
+
+  function deadlineInfo(deadline, complete) {
+    if (complete) return { text: "Zakończony", className: "is-done", priority: 0, days: 0 };
+    if (!deadline) return { text: "Bez terminu", className: "", priority: 0, days: null };
+    var due = dateFromISO(deadline);
+    if (!due) return { text: "Bez terminu", className: "", priority: 0, days: null };
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.ceil((due.getTime() - today.getTime()) / 86400000);
+    if (days < 0) return { text: "Po terminie o " + Math.abs(days) + " dni", className: "is-overdue", priority: 2, days: days };
+    if (days === 0) return { text: "Termin dzisiaj", className: "is-overdue", priority: 2, days: 0 };
+    if (days <= 30) return { text: "Termin za " + days + " dni", className: "is-soon", priority: 1, days: days };
+    return { text: "W trakcie", className: "", priority: 0, days: days };
+  }
+
+  function targetName(transaction) {
+    if (transaction.type === "goal" || transaction.type === "goal_withdraw") {
+      var goal = data.goals.find(function (item) { return item.id === transaction.targetId; });
+      return goal ? goal.name : "Usunięty cel";
+    }
+    if (transaction.type === "debt") {
+      var debt = data.debts.find(function (item) { return item.id === transaction.targetId; });
+      return debt ? debt.name : "Usunięty dług";
+    }
+    if (transaction.type === "transfer") {
+      return accountName(transaction.accountId) + " 
