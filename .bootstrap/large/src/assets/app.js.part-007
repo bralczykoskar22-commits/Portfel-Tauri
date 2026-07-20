@@ -1,0 +1,112 @@
+ypłać z celu</button>" +
+        "<button class=\"text-button\" type=\"button\" data-history-goal=\"" + escapeHTML(goal.id) + "\">Historia</button></div></article>";
+    }).join("");
+  }
+
+  function renderDebts() {
+    var paidTotal = data.debts.reduce(function (sum, debt) { return sum + debtPaid(debt); }, 0);
+    var debtTotal = data.debts.reduce(function (sum, debt) { return sum + number(debt.total); }, 0);
+    var complete = data.debts.filter(function (debt) { return debtRemaining(debt) <= 0; }).length;
+    var interestTotal = data.debts.reduce(function (sum, debt) { return sum + debtPlan(debt).estimatedInterest; }, 0);
+    $("#debts-summary").innerHTML =
+      "<div class=\"summary-item\"><span>Kwota początkowa</span><strong>" + escapeHTML(money(debtTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Spłacono automatycznie</span><strong>" + escapeHTML(money(paidTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Szacowane przyszłe odsetki</span><strong>" + escapeHTML(money(interestTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Spłacone długi</span><strong>" + complete + " z " + data.debts.length + "</strong></div>";
+    var node = $("#debts-grid");
+    if (!data.debts.length) {
+      node.innerHTML = "<div class=\"empty-targets\"><div><strong>Nie masz jeszcze długów</strong><span>Dodaj dług, a każda miesięczna rata będzie automatycznie zmniejszać pozostałą kwotę.</span></div></div>";
+      return;
+    }
+    node.innerHTML = data.debts.map(function (debt, index) {
+      var plan = debtPlan(debt);
+      var percent = number(debt.total) > 0 ? Math.min(plan.paid / number(debt.total) * 100, 100) : 0;
+      var info = deadlineInfo(debt.deadline, plan.remaining <= 0);
+      var status = plan.impossible ? "<span class=\"status-badge is-overdue\">Termin wymaga zmiany</span>" : targetStatusHTML(info);
+      var next = plan.nextDate ? formattedDate(isoDate(plan.nextDate)) : "Brak terminu";
+      var projected = plan.projected ? formattedDate(isoDate(plan.projected)) : "Brak danych";
+      return "<article class=\"target-card is-debt target-card-wide\" style=\"animation-delay:" + (index * .05) + "s\">" +
+        "<div class=\"target-head\"><div><h3>" + escapeHTML(debt.name) + "</h3><p>Dług: " + escapeHTML(money(debt.total)) + "</p></div>" +
+        "<div class=\"target-menu\"><button class=\"tiny-button\" type=\"button\" data-edit-debt=\"" + escapeHTML(debt.id) + "\" aria-label=\"Edytuj dług\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button>" +
+        "<button class=\"tiny-button is-delete\" type=\"button\" data-delete-debt=\"" + escapeHTML(debt.id) + "\" aria-label=\"Usuń dług\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button></div></div>" +
+        "<div class=\"target-progress-row\"><div class=\"progress-ring\" style=\"--progress:" + (percent * 3.6) + "deg\"><div><strong>" + Math.round(percent) + "%</strong><span>spłacono</span></div></div>" +
+        "<div class=\"recommended-box is-debt\"><span>Zalecana rata</span><strong>" + escapeHTML(money(plan.recommended)) + "</strong><small>miesięcznie • najbliższa " + escapeHTML(next) + "</small></div></div>" +
+        "<div class=\"target-numbers target-numbers-three\"><div class=\"target-number\"><span>Spłacono</span><strong>" + escapeHTML(money(plan.paid)) + "</strong></div><div class=\"target-number\"><span>Zostało</span><strong>" + escapeHTML(money(plan.remaining)) + "</strong></div><div class=\"target-number\"><span>Odsetki prognozowane</span><strong>" + escapeHTML(money(plan.estimatedInterest)) + "</strong></div></div>" +
+        "<div class=\"schedule-details\"><div><span>Oprocentowanie</span><strong>" + (plan.apr > 0 ? escapeHTML(number(plan.apr).toLocaleString("pl-PL")) + "% rocznie • naliczone ok. " + escapeHTML(money(plan.accruedInterest)) : "Wyłączone") + "</strong></div><div><span>Prognozowana spłata</span><strong>" + escapeHTML(projected) + "</strong></div></div>" +
+        "<div class=\"target-footer\">" + status + "<span class=\"target-tag\">do " + escapeHTML(formattedDate(debt.deadline)) + "</span></div>" +
+        "<div class=\"target-actions\"><button class=\"button button-primary compact-button\" type=\"button\" data-pay-debt=\"" + escapeHTML(debt.id) + "\">Dodaj ratę</button>" +
+        "<button class=\"text-button\" type=\"button\" data-history-debt=\"" + escapeHTML(debt.id) + "\">Historia</button></div></article>";
+    }).join("");
+  }
+
+  function renderPlanMonthTabs() {
+    $("#plan-month-tabs").innerHTML = MONTHS.map(function (_, index) {
+      return "<button class=\"month-tab " + (state.planMonth === index ? "is-active" : "") + "\" type=\"button\" data-plan-month=\"" + index + "\" aria-pressed=\"" + (state.planMonth === index ? "true" : "false") + "\">" + MONTHS_SHORT[index] + "</button>";
+    }).join("");
+  }
+
+  function renderRecurring() {
+    var node = $("#recurring-list");
+    if (!data.recurring.length) {
+      node.innerHTML = "<div class=\"empty-plan\">Brak cyklicznych wpływów i wydatków. Dodaj np. wypłatę, czynsz albo abonament.</div>";
+      return;
+    }
+    var today = startOfToday();
+    var horizon = addMonths(today, 18);
+    node.innerHTML = data.recurring.map(function (recurring) {
+      var next = recurringOccurrences(recurring, today, horizon)[0];
+      var schedule = recurring.cadence === "weekly"
+        ? "co tydzień • dzień " + recurring.day
+        : "co miesiąc • dzień " + recurring.day;
+      var nextLabel = recurring.active ? (next ? formattedDate(isoDate(next)) : "Brak kolejnego terminu") : "Harmonogram wstrzymany";
+      var rangeLabel = "od " + formattedDate(recurring.startDate) + " • " + (recurring.endDate ? "do " + formattedDate(recurring.endDate) : "bezterminowo");
+      return "<div class=\"automation-item " + (recurring.active ? "" : "is-inactive") + "\">" +
+        "<div class=\"automation-icon " + (recurring.type === "income" ? "is-income" : "is-expense") + "\">" + (recurring.type === "income" ? "↑" : "↓") + "</div>" +
+        "<div class=\"automation-main\"><strong>" + escapeHTML(recurring.name) + "</strong><span>" + escapeHTML(recurring.category + " • " + accountName(recurring.accountId) + " • " + schedule + " • " + rangeLabel + " • " + nextLabel) + "</span></div>" +
+        "<strong class=\"automation-amount " + (recurring.type === "expense" ? "is-out" : "") + "\">" + (recurring.type === "income" ? "+" : "−") + escapeHTML(money(recurring.amount)) + "</strong>" +
+        "<div class=\"row-actions\"><button class=\"tiny-button\" type=\"button\" data-edit-recurring=\"" + escapeHTML(recurring.id) + "\" aria-label=\"Edytuj cykliczny wpis\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button>" +
+        "<button class=\"tiny-button is-delete\" type=\"button\" data-delete-recurring=\"" + escapeHTML(recurring.id) + "\" aria-label=\"Usuń cykliczny wpis\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button></div></div>";
+    }).join("");
+  }
+
+  function renderBudgets() {
+    var node = $("#budgets-list");
+    if (!data.budgets.length) {
+      node.innerHTML = "<div class=\"empty-plan\">Brak kopert. Dodaj miesięczny limit np. na żywność lub rozrywkę.</div>";
+      return;
+    }
+    node.innerHTML = data.budgets.map(function (budget) {
+      var spent = categorySpent(budget.category, state.planMonth);
+      var remaining = number(budget.limit) - spent;
+      var percent = number(budget.limit) > 0 ? spent / number(budget.limit) * 100 : 0;
+      var over = remaining < -.0001;
+      return "<article class=\"envelope " + (over ? "is-over" : "") + "\">" +
+        "<div class=\"envelope-head\"><div><span>Koperta</span><strong>" + escapeHTML(budget.category) + "</strong></div><div class=\"row-actions\"><button class=\"tiny-button\" type=\"button\" data-edit-budget=\"" + escapeHTML(budget.id) + "\" aria-label=\"Edytuj kopertę\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button><button class=\"tiny-button is-delete\" type=\"button\" data-delete-budget=\"" + escapeHTML(budget.id) + "\" aria-label=\"Usuń kopertę\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button></div></div>" +
+        "<div class=\"envelope-values\"><span>Wydano <strong>" + escapeHTML(money(spent)) + "</strong></span><span>Limit <strong>" + escapeHTML(money(budget.limit)) + "</strong></span></div>" +
+        "<div class=\"envelope-progress\"><i style=\"width:" + Math.min(percent, 100) + "%\"></i></div>" +
+        "<div class=\"envelope-status\">" + (over ? "Przekroczono o " + escapeHTML(money(Math.abs(remaining))) : "Zostało " + escapeHTML(money(remaining))) + "</div></article>";
+    }).join("");
+  }
+
+  function calendarEvents(month) {
+    var start = startOfMonth(currentYear(), month);
+    var end = endOfMonth(currentYear(), month);
+    var events = [];
+    (modules().recurring ? data.recurring : []).filter(function (item) { return item.active; }).forEach(function (recurring) {
+      recurringOccurrences(recurring, start, end).forEach(function (date) {
+        events.push({ date: date, kind: "recurring", title: recurring.name, amount: recurring.amount, direction: recurring.type });
+      });
+    });
+    data.goals.forEach(function (goal) {
+      var plan = goalPlan(goal);
+      if (plan.remaining <= 0) return;
+      goalScheduleDates(goal, start, end).forEach(function (date) {
+        events.push({ date: date, kind: "goal", title: goal.name, amount: Math.min(plan.recommended, plan.remaining) });
+      });
+    });
+    data.debts.forEach(function (debt) {
+      var plan = debtPlan(debt);
+      if (plan.remaining <= 0) return;
+      debtScheduleDates(debt, start, end).forEach(function (date) {
+        events.push({ date: date, kind: "debt", title: debt.name, amount: Math.min(plan.recommended, plan.remaining + plan.estimatedInterest) });
+     
