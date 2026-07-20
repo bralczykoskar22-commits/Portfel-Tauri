@@ -1,0 +1,581 @@
+ padding: 20px;
+}
+
+.month-plan-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.month-plan-item {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--bg-soft);
+  animation: planEnter .4s var(--ease) both;
+}
+
+.month-plan-item.is-complete {
+  opacity: .72;
+}
+
+.plan-check {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.is-debt .plan-check,
+.month-plan-item.is-debt .plan-check {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.month-plan-item.is-recurring .plan-check {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.month-plan-item.is-complete .plan-check {
+  color: var(--success);
+  background: var(--success-soft);
+  font-size: 1rem;
+}
+
+.plan-main,
+.plan-values {
+  min-width: 0;
+}
+
+.plan-main strong,
+.plan-main span,
+.plan-values span,
+.plan-values strong {
+  display: block;
+}
+
+.plan-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .84rem;
+}
+
+.plan-main span,
+.plan-values span {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.plan-values {
+  text-align: right;
+}
+
+.plan-values strong {
+  margin-top: 2px;
+  font-size: .78rem;
+}
+
+.plan-progress {
+  overflow: hidden;
+  width: min(230px, 100%);
+  height: 5px;
+  margin-top: 7px;
+  border-radius: 99px;
+  background: var(--border);
+}
+
+.plan-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--blue));
+  transition: width .65s var(--ease);
+}
+
+.empty-plan,
+.empty-backups {
+  padding: 22px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg-soft) 65%, transparent);
+  text-align: center;
+  font-size: .78rem;
+}
+
+.target-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.target-progress-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin: 18px 0;
+}
+
+.target-progress-row .progress-ring {
+  margin: 0;
+}
+
+.recommended-box {
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: 15px;
+  background: linear-gradient(135deg, var(--primary-soft), color-mix(in srgb, var(--surface) 72%, transparent));
+}
+
+.recommended-box.is-debt {
+  border-color: color-mix(in srgb, var(--orange) 28%, var(--border));
+  background: linear-gradient(135deg, var(--orange-soft), color-mix(in srgb, var(--surface) 72%, transparent));
+}
+
+.recommended-box span,
+.recommended-box strong,
+.recommended-box small {
+  display: block;
+}
+
+.recommended-box span {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+.recommended-box strong {
+  margin-top: 3px;
+  font-size: 1.3rem;
+}
+
+.recommended-box small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: .66rem;
+}
+
+.target-numbers-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.target-numbers-three .target-number strong {
+  overflow-wrap: anywhere;
+}
+
+.schedule-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.schedule-details > div {
+  padding: 11px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-soft) 74%, transparent);
+}
+
+.schedule-details span,
+.schedule-details strong {
+  display: block;
+}
+
+.schedule-details span {
+  color: var(--muted);
+  font-size: .64rem;
+}
+
+.schedule-details strong {
+  margin-top: 3px;
+  font-size: .72rem;
+}
+
+.schedule-details .is-ahead,
+.schedule-details .is-on-track {
+  color: var(--success);
+}
+
+.schedule-details .is-behind {
+  color: var(--danger);
+}
+
+.plan-warning {
+  margin: -4px 0 13px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: .7rem;
+  font-weight: 700;
+}
+
+.target-actions {
+  margin-top: 14px;
+}
+
+.target-actions .text-button {
+  margin-left: auto;
+}
+
+.target-actions .button[disabled] {
+  opacity: .45;
+  pointer-events: none;
+}
+
+.planning-tools {
+  align-items: flex-end;
+}
+
+.planning-grid {
+  display: grid;
+  grid-template-columns: 1.08fr .92fr;
+  gap: 17px;
+}
+
+.planning-card,
+.calendar-card,
+.forecast-card {
+  padding: 20px;
+}
+
+.automation-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.automation-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto auto;
+  gap: 11px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-soft);
+  transition: transform .24s var(--ease), border-color .24s ease;
+}
+
+.automation-item:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+
+.automation-item.is-inactive {
+  opacity: .55;
+}
+
+.automation-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-weight: 800;
+}
+
+.automation-icon.is-income {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.automation-main {
+  min-width: 0;
+}
+
+.automation-main strong,
+.automation-main span {
+  display: block;
+}
+
+.automation-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .8rem;
+}
+
+.automation-main span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: .65rem;
+}
+
+.automation-amount {
+  color: var(--success);
+  font-size: .76rem;
+}
+
+.automation-amount.is-out {
+  color: var(--danger);
+}
+
+.envelope-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.envelope-grid > .empty-plan {
+  grid-column: 1 / -1;
+}
+
+.envelope {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-soft);
+  transition: transform .25s var(--ease), border-color .25s ease;
+}
+
+.envelope:hover {
+  transform: translateY(-3px);
+}
+
+.envelope.is-over {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.envelope-head,
+.envelope-values,
+.envelope-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.envelope-head span,
+.envelope-head strong {
+  display: block;
+}
+
+.envelope-head span,
+.envelope-values,
+.envelope-status {
+  color: var(--muted);
+  font-size: .64rem;
+}
+
+.envelope-head strong {
+  font-size: .78rem;
+}
+
+.envelope-values {
+  margin-top: 12px;
+}
+
+.envelope-values strong {
+  color: var(--text);
+}
+
+.envelope-progress {
+  overflow: hidden;
+  height: 7px;
+  margin-top: 8px;
+  border-radius: 99px;
+  background: var(--border);
+}
+
+.envelope-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--blue), var(--purple));
+  transition: width .6s var(--ease);
+}
+
+.is-over .envelope-progress i {
+  background: var(--danger);
+}
+
+.envelope-status {
+  margin-top: 7px;
+  justify-content: flex-end;
+}
+
+.is-over .envelope-status {
+  color: var(--danger);
+  font-weight: 800;
+}
+
+.calendar-card {
+  margin-top: 17px;
+}
+
+.calendar-legend {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.calendar-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.calendar-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+.calendar-dot.is-goal { background: var(--primary); }
+.calendar-dot.is-debt { background: var(--orange); }
+.calendar-dot.is-recurring { background: var(--blue); }
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.calendar-weekday {
+  padding: 5px;
+  color: var(--muted);
+  text-align: center;
+  font-size: .63rem;
+  font-weight: 800;
+}
+
+.calendar-day {
+  min-height: 68px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-soft);
+  animation: calendarPop .35s var(--ease) both;
+}
+
+.calendar-day.is-empty {
+  border-color: transparent;
+  background: transparent;
+}
+
+.calendar-day.is-today {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.calendar-day > strong {
+  font-size: .68rem;
+}
+
+.calendar-day-events {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.calendar-day-events small {
+  color: var(--muted);
+  font-size: .58rem;
+}
+
+.calendar-events {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.calendar-event {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 10px;
+  border-left: 3px solid var(--blue);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+.calendar-event.is-goal { border-left-color: var(--primary); }
+.calendar-event.is-debt { border-left-color: var(--orange); }
+
+.calendar-event time {
+  color: var(--muted);
+  font-size: .65rem;
+  font-weight: 800;
+}
+
+.calendar-event div strong,
+.calendar-event div span {
+  display: block;
+}
+
+.calendar-event div strong,
+.calendar-event > strong {
+  font-size: .7rem;
+}
+
+.calendar-event div span {
+  color: var(--muted);
+  font-size: .6rem;
+}
+
+.analytics-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.forecast-card {
+  margin-top: 17px;
+}
+
+.forecast-chart {
+  min-height: 300px;
+  margin-top: 14px;
+}
+
+.forecast-chart svg {
+  width: 100%;
+  height: auto;
+}
+
+.forecast-line {
+  stroke-dasharray: 1500;
+  stroke-dashoffset: 1500;
+  animation: drawForecast 1.25s var(--ease) forwards;
+}
+
+.forecast-point {
+  opacity: 0;
+  animation: pointEnter .35s var(--ease) .5s forwards;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  border-radius: 9px;
+  background: var(--primary);
+}
+
+.
