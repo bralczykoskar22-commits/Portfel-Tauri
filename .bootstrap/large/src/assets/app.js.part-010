@@ -1,0 +1,190 @@
+))]) : number(balance.available);
+    $("#settings-available-label").textContent = modules().bankAccounts ? "Gotówka główna 1 stycznia" : "Gotówka dostępna 1 stycznia";
+    $("#settings-reserve").value = number(balance.reserve);
+    $("#settings-categories").value = data.settings.categories.join("\n");
+    $("#module-bank-accounts").checked = !!modules().bankAccounts;
+    $("#module-statement-import").checked = !!modules().statementImport;
+    $("#module-statement-import").disabled = !modules().bankAccounts;
+    $("#module-alerts").checked = !!modules().alerts;
+    $("#module-daily-limit").checked = !!modules().dailyLimit;
+    $("#module-weekly-limit").checked = !!modules().weeklyLimit;
+    $("#module-interest").checked = !!modules().interest;
+    $("#module-recurring").checked = !!modules().recurring;
+    $("#module-category-budgets").checked = !!modules().categoryBudgets;
+    $("#settings-payday-day").value = number(data.settings.payday && data.settings.payday.day) || 10;
+    $("#settings-next-payday").value = String(data.settings.payday && data.settings.payday.nextDate || "");
+    if (appInfo) {
+      $("#desktop-data-file").textContent = String(appInfo.dataPath || "portfel.sqlite").split(/[\\/]/).pop();
+      $("#desktop-data-path").textContent = appInfo.dataPath || "Lokalna baza danych";
+    }
+    $("#settings-error").textContent = "";
+    renderBackups();
+    renderUpdateStatus();
+  }
+
+  function renderAll() {
+    applyModuleVisibility();
+    renderNavCounts();
+    renderDashboard();
+    if (state.page === "months") renderMonths();
+    if (state.page === "goals") renderGoals();
+    if (state.page === "debts") renderDebts();
+    if (state.page === "plan") renderPlan();
+    if (state.page === "analytics") renderAnalytics();
+    if (state.page === "accounts") renderAccounts();
+    if (state.page === "settings") renderSettings();
+    updateSaveState();
+  }
+
+  function openDialog(id) {
+    var dialog = $("#" + id);
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  }
+
+  function closeDialog(id) {
+    var dialog = $("#" + id);
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  function defaultTransactionDate() {
+    var now = new Date();
+    if (now.getFullYear() === currentYear() && now.getMonth() === state.month) return isoDate(now);
+    return currentYear() + "-" + String(state.month + 1).padStart(2, "0") + "-01";
+  }
+
+  function setTransactionDateLimits() {
+    var lastDay = new Date(currentYear(), state.month + 1, 0).getDate();
+    var prefix = currentYear() + "-" + String(state.month + 1).padStart(2, "0") + "-";
+    $("#transaction-date").min = prefix + "01";
+    $("#transaction-date").max = prefix + String(lastDay).padStart(2, "0");
+  }
+
+  function renderTransactionOptions() {
+    var type = $("#transaction-type").value;
+    var categoryField = $("#transaction-category-field");
+    var targetField = $("#transaction-target-field");
+    var target = $("#transaction-target");
+    var goalType = type === "goal" || type === "goal_withdraw";
+    var targetType = goalType || type === "debt";
+    var transfer = type === "transfer";
+    categoryField.hidden = targetType || transfer || type === "reserve_in" || type === "reserve_out";
+    targetField.hidden = !targetType;
+    $("#transaction-account-field").hidden = !modules().bankAccounts && !transfer;
+    $("#transaction-to-account-field").hidden = !transfer;
+    $("#transaction-category").required = type === "income" || type === "expense";
+    target.required = targetType;
+    $("#transaction-to-account").required = transfer;
+    if (!targetType) return;
+    var items = goalType ? data.goals : data.debts;
+    $("#transaction-target-label").textContent = goalType ? "Cel" : "Dług";
+    var existingValue = target.value;
+    target.innerHTML = items.map(function (item) {
+      var left = type === "goal" ? goalRemaining(item, state.editingTransaction) : type === "goal_withdraw" ? goalSaved(item, state.editingTransaction) : debtRemaining(item, state.editingTransaction);
+      var suffix = type === "goal_withdraw" ? "dostępne " : "zostało ";
+      return "<option value=\"" + escapeHTML(item.id) + "\">" + escapeHTML(item.name) + " — " + suffix + escapeHTML(money(left)) + "</option>";
+    }).join("");
+    if (!items.length) target.innerHTML = "<option value=\"\">Najpierw dodaj " + (goalType ? "cel" : "dług") + "</option>";
+    if (items.some(function (item) { return item.id === existingValue; })) target.value = existingValue;
+  }
+
+  function fillCategoryOptions() {
+    var current = $("#transaction-category").value;
+    $("#transaction-category").innerHTML = data.settings.categories.map(function (category) {
+      return "<option value=\"" + escapeHTML(category) + "\">" + escapeHTML(category) + "</option>";
+    }).join("");
+    if (data.settings.categories.indexOf(current) >= 0) $("#transaction-category").value = current;
+  }
+
+  function fillAccountOptions() {
+    var transactionCurrent = $("#transaction-account").value;
+    var destinationCurrent = $("#transaction-to-account").value;
+    var recurringCurrent = $("#recurring-account").value;
+    var accounts = activeAccounts();
+    var options = accounts.map(function (account) {
+      return "<option value=\"" + escapeHTML(account.id) + "\">" + escapeHTML(account.name + " • " + accountTypeLabel(account.type)) + "</option>";
+    }).join("");
+    if (!options) options = "<option value=\"\">Brak aktywnego konta</option>";
+    $("#transaction-account").innerHTML = options;
+    $("#transaction-to-account").innerHTML = options;
+    $("#recurring-account").innerHTML = options;
+    if (accounts.some(function (account) { return account.id === transactionCurrent; })) $("#transaction-account").value = transactionCurrent;
+    if (accounts.some(function (account) { return account.id === destinationCurrent; })) $("#transaction-to-account").value = destinationCurrent;
+    else if (accounts.length > 1) $("#transaction-to-account").value = accounts[1].id;
+    if (accounts.some(function (account) { return account.id === recurringCurrent; })) $("#recurring-account").value = recurringCurrent;
+  }
+
+  function openTransactionDialog(editingId, presetType, presetTarget, presetAmount, presetDate, presetRecurringId) {
+    state.editingTransaction = editingId || null;
+    state.transactionPreset = null;
+    $("#transaction-form").reset();
+    $("#transaction-error").textContent = "";
+    $("#recurring-confirmation").hidden = true;
+    $("#transaction-submit").textContent = "Zastosuj";
+    setTransactionDateLimits();
+    fillCategoryOptions();
+    fillAccountOptions();
+    var transaction = editingId ? data.transactions.find(function (item) { return item.id === editingId; }) : null;
+    if (transaction) {
+      var date = dateFromISO(transaction.date);
+      if (date) state.month = date.getMonth();
+      setTransactionDateLimits();
+      $("#transaction-date").value = transaction.date;
+      $("#transaction-type").value = transaction.type;
+      renderTransactionOptions();
+      $("#transaction-category").value = transaction.category || data.settings.categories[0] || "";
+      $("#transaction-target").value = transaction.targetId || "";
+      $("#transaction-account").value = transaction.accountId || mainCashAccount().id;
+      $("#transaction-to-account").value = transaction.toAccountId || "";
+      $("#transaction-description").value = transaction.description || "";
+      $("#transaction-amount").value = transaction.amount;
+      $("#transaction-note").value = transaction.note || "";
+      if (transaction.recurringId) {
+        var expectedForEdit = number(transaction.expectedAmount) || number(transaction.amount);
+        $("#recurring-expected-amount").textContent = money(expectedForEdit);
+        $("#recurring-confirmation").hidden = false;
+        $("#transaction-submit").textContent = "Zapisz faktyczną kwotę";
+      }
+      $("#transaction-dialog-title").textContent = "Edytuj operację";
+    } else {
+      $("#transaction-date").value = presetDate || defaultTransactionDate();
+      $("#transaction-type").value = presetType || "expense";
+      renderTransactionOptions();
+      if (presetTarget) $("#transaction-target").value = presetTarget;
+      if (number(presetAmount) > 0) $("#transaction-amount").value = number(presetAmount).toFixed(2);
+      if (presetDate && (presetType === "goal" || presetType === "debt")) {
+        state.transactionPreset = { recurringId: "", scheduledDate: presetDate };
+      }
+      if (presetRecurringId) {
+        var recurring = data.recurring.find(function (item) { return item.id === presetRecurringId; });
+        if (recurring) {
+          $("#transaction-category").value = recurring.category;
+          $("#transaction-account").value = recurring.accountId || mainCashAccount().id;
+          $("#transaction-description").value = recurring.name;
+          $("#recurring-expected-amount").textContent = money(recurring.amount);
+          $("#recurring-confirmation").hidden = false;
+          $("#transaction-submit").textContent = "Potwierdź faktyczną kwotę";
+          state.transactionPreset = { recurringId: recurring.id, scheduledDate: presetDate || "", expectedAmount: number(recurring.amount) };
+        }
+      }
+      $("#transaction-dialog-title").textContent = "Dodaj operację";
+    }
+    renderTransactionOptions();
+    openDialog("transaction-dialog");
+  }
+
+  function transactionDateValid(value) {
+    var date = dateFromISO(value);
+    return !!date && date.getFullYear() === currentYear() && date.getMonth() === state.month;
+  }
+
+  function submitTransaction(event) {
+    event.preventDefault();
+    var error = $("#transaction-error");
+    error.textContent = "";
+    var type = $("#transaction-type").value;
+    var amount = number($("#transaction-amount").value);
+    var date = $("#transaction-date").value;
+    var targetId = $("#transaction-target").value;
+    var accountId = $("#transaction-accou
