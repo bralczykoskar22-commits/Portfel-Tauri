@@ -1,0 +1,216 @@
+nt").value || (mainCashAccount() && mainCashAccount().id);
+    var toAccountId = $("#transaction-to-account").value;
+    if (!transactionDateValid(date)) {
+      error.textContent = "Data musi należeć do wybranego miesiąca.";
+      return;
+    }
+    if (!(amount > 0)) {
+      error.textContent = "Kwota musi być większa od zera.";
+      return;
+    }
+    if (!data.accounts.some(function (account) { return account.id === accountId; })) {
+      error.textContent = "Wybierz konto dla tej operacji.";
+      return;
+    }
+    if (type === "transfer" && (!modules().bankAccounts || !data.accounts.some(function (account) { return account.id === toAccountId; }) || accountId === toAccountId)) {
+      error.textContent = "Wybierz dwa różne konta dla transferu.";
+      return;
+    }
+    if (type === "goal") {
+      var goal = data.goals.find(function (item) { return item.id === targetId; });
+      if (!goal) {
+        error.textContent = "Najpierw dodaj cel.";
+        return;
+      }
+      if (amount > goalRemaining(goal, state.editingTransaction) + .0001) {
+        error.textContent = "Wpłata przekracza kwotę pozostałą do celu.";
+        return;
+      }
+    }
+    if (type === "goal_withdraw") {
+      var withdrawalGoal = data.goals.find(function (item) { return item.id === targetId; });
+      if (!withdrawalGoal) {
+        error.textContent = "Najpierw dodaj cel.";
+        return;
+      }
+      if (amount > goalSaved(withdrawalGoal, state.editingTransaction) + .0001) {
+        error.textContent = "Nie możesz wypłacić więcej niż aktualnie odłożono na ten cel.";
+        return;
+      }
+    }
+    if (type === "debt") {
+      var debt = data.debts.find(function (item) { return item.id === targetId; });
+      if (!debt) {
+        error.textContent = "Najpierw dodaj dług.";
+        return;
+      }
+      var debtLeft = debtRemaining(debt, state.editingTransaction);
+      var nextInterest = modules().interest && debt.interestEnabled ? debtLeft * Math.max(0, number(debt.apr)) / 1200 : 0;
+      if (amount > debtLeft + nextInterest + .0001) {
+        error.textContent = "Wpłata przekracza pozostałe saldo wraz z odsetkami za najbliższy okres.";
+        return;
+      }
+    }
+    var existing = data.transactions.find(function (item) { return item.id === state.editingTransaction; });
+    var transaction = {
+      id: existing ? existing.id : uid("tx"),
+      date: date,
+      type: type,
+      category: type === "income" || type === "expense" ? $("#transaction-category").value : "",
+      targetId: type === "goal" || type === "goal_withdraw" || type === "debt" ? targetId : "",
+      recurringId: existing ? existing.recurringId || "" : state.transactionPreset ? state.transactionPreset.recurringId : "",
+      scheduledDate: existing ? existing.scheduledDate || "" : state.transactionPreset ? state.transactionPreset.scheduledDate : "",
+      expectedAmount: existing ? number(existing.expectedAmount) : state.transactionPreset ? number(state.transactionPreset.expectedAmount) : 0,
+      description: $("#transaction-description").value.trim(),
+      amount: amount,
+      note: $("#transaction-note").value.trim(),
+      accountId: accountId,
+      toAccountId: type === "transfer" ? toAccountId : "",
+      importFingerprint: existing ? existing.importFingerprint || "" : "",
+      source: existing ? existing.source || "manual" : "manual",
+      createdAt: existing ? existing.createdAt : new Date().toISOString()
+    };
+    if (existing) {
+      data.transactions = data.transactions.map(function (item) {
+        return item.id === existing.id ? transaction : item;
+      });
+    } else {
+      data.transactions.push(transaction);
+    }
+    state.editingTransaction = null;
+    state.transactionPreset = null;
+    closeDialog("transaction-dialog");
+    markDirty(existing ? "Zmieniono operację." : "Dodano operację.");
+    renderAll();
+    if (state.page === "months") renderMonths();
+  }
+
+  function deleteTransaction(id) {
+    if (!window.confirm("Usunąć tę operację? Cel lub dług zostanie automatycznie przeliczony.")) return;
+    data.transactions = data.transactions.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto operację.");
+    renderAll();
+  }
+
+  function openGoalDialog(id) {
+    state.editingGoal = id || null;
+    $("#goal-form").reset();
+    $("#goal-error").textContent = "";
+    fillGoalPaydayOptions();
+    var goal = id ? data.goals.find(function (item) { return item.id === id; }) : null;
+    if (goal) {
+      $("#goal-name").value = goal.name;
+      $("#goal-target").value = goal.target;
+      $("#goal-deadline").value = goal.deadline || "";
+      $("#goal-start").value = goal.startDate || String(goal.createdAt || "").slice(0, 10) || isoDate(startOfToday());
+      $("#goal-cadence").value = goal.cadence || "monthly";
+      $("#goal-payment-day").value = number(goal.paymentDay) || 1;
+      $("#goal-payday-recurring").value = goal.paydayRecurringId || "";
+      $("#goal-max-contribution").value = number(goal.maxContribution) || "";
+      $("#goal-dialog-title").textContent = "Edytuj cel";
+    } else {
+      $("#goal-start").value = isoDate(startOfToday());
+      $("#goal-cadence").value = "monthly";
+      $("#goal-payment-day").value = 1;
+      $("#goal-dialog-title").textContent = "Dodaj cel";
+    }
+    updateGoalCadenceFields();
+    openDialog("goal-dialog");
+  }
+
+  function fillGoalPaydayOptions() {
+    var current = $("#goal-payday-recurring").value;
+    var incomes = data.recurring.filter(function (item) { return item.active && item.type === "income"; });
+    $("#goal-payday-recurring").innerHTML = incomes.length ? incomes.map(function (item) {
+      return "<option value=\"" + escapeHTML(item.id) + "\">" + escapeHTML(item.name + " • " + money(item.amount)) + "</option>";
+    }).join("") : "<option value=\"\">Najpierw dodaj cykliczną wypłatę</option>";
+    if (incomes.some(function (item) { return item.id === current; })) $("#goal-payday-recurring").value = current;
+    else if (incomes.length) $("#goal-payday-recurring").value = incomes[0].id;
+  }
+
+  function updateGoalCadenceFields() {
+    var cadence = $("#goal-cadence").value;
+    var field = $("#goal-payment-day-field");
+    field.hidden = cadence === "payday";
+    $("#goal-payday-field").hidden = cadence !== "payday";
+    $("#goal-payment-day").required = cadence !== "payday";
+    $("#goal-payment-day").max = cadence === "weekly" ? "7" : "31";
+    $("#goal-payment-day-label").textContent = cadence === "weekly" ? "Dzień tygodnia (1=pon., 7=niedz.)" : "Dzień miesiąca";
+    if (cadence === "weekly" && number($("#goal-payment-day").value) > 7) $("#goal-payment-day").value = 1;
+  }
+
+  function submitGoal(event) {
+    event.preventDefault();
+    var name = $("#goal-name").value.trim();
+    var target = number($("#goal-target").value);
+    var startDate = $("#goal-start").value;
+    var deadline = $("#goal-deadline").value;
+    var cadence = $("#goal-cadence").value;
+    var paymentDay = Math.round(number($("#goal-payment-day").value) || 1);
+    var maxContribution = number($("#goal-max-contribution").value);
+    var paydayRecurringId = cadence === "payday" ? $("#goal-payday-recurring").value : "";
+    var error = $("#goal-error");
+    error.textContent = "";
+    if (!name || !(target > 0) || !startDate || !deadline) {
+      error.textContent = "Podaj nazwę, kwotę, początek planu i termin.";
+      return;
+    }
+    if (dateFromISO(deadline).getTime() < dateFromISO(startDate).getTime()) {
+      error.textContent = "Termin celu nie może być wcześniejszy niż początek planu.";
+      return;
+    }
+    if (cadence !== "payday" && (paymentDay < 1 || paymentDay > (cadence === "weekly" ? 7 : 31))) {
+      error.textContent = "Sprawdź dzień planowanej wpłaty.";
+      return;
+    }
+    var editingGoal = state.editingGoal ? data.goals.find(function (item) { return item.id === state.editingGoal; }) : null;
+    var alreadySaved = editingGoal ? goalSaved(editingGoal) : 0;
+    if (target + .0001 < alreadySaved) {
+      error.textContent = "Kwota celu nie może być niższa niż już odłożona suma.";
+      return;
+    }
+    var existing = data.goals.find(function (item) { return item.id === state.editingGoal; });
+    var goal = {
+      id: existing ? existing.id : uid("goal"),
+      name: name,
+      target: target,
+      deadline: deadline,
+      startDate: startDate,
+      cadence: cadence,
+      paymentDay: paymentDay,
+      paydayRecurringId: paydayRecurringId,
+      maxContribution: Math.max(0, maxContribution),
+      createdAt: existing ? existing.createdAt : new Date().toISOString()
+    };
+    if (existing) data.goals = data.goals.map(function (item) { return item.id === existing.id ? goal : item; });
+    else data.goals.push(goal);
+    state.editingGoal = null;
+    closeDialog("goal-dialog");
+    markDirty(existing ? "Zmieniono cel." : "Dodano cel.");
+    renderAll();
+  }
+
+  function deleteGoal(id) {
+    if (data.transactions.some(function (transaction) { return (transaction.type === "goal" || transaction.type === "goal_withdraw") && transaction.targetId === id; })) {
+      showToast("Ten cel ma powiązane wpłaty. Najpierw usuń lub edytuj te operacje.");
+      return;
+    }
+    if (!window.confirm("Usunąć ten cel?")) return;
+    data.goals = data.goals.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto cel.");
+    renderAll();
+  }
+
+  function openDebtDialog(id) {
+    state.editingDebt = id || null;
+    $("#debt-form").reset();
+    $("#debt-error").textContent = "";
+    var debt = id ? data.debts.find(function (item) { return item.id === id; }) : null;
+    if (debt) {
+      $("#debt-name").value = debt.name;
+      $("#debt-total").value = debt.total;
+      $("#debt-deadline").value = debt.deadline || "";
+      $("#debt-apr").value = number(debt.apr);
+      $("#debt-interest-enabled").checked = modules().interest && debt.interestEnabled !== false && number(debt.apr) > 0;
+      $("#debt-minimum-payment").value = number(debt.minimumPayment);
+      $("#debt-paym
