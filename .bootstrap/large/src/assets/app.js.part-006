@@ -1,0 +1,107 @@
+   }
+    node.innerHTML = items.map(function (item) {
+      var percent = item.planned > 0 ? Math.min(item.actual / item.planned * 100, 100) : 100;
+      var action = "";
+      if (!item.complete && item.kind === "recurring") {
+        action = "<button class=\"button button-soft compact-button\" type=\"button\" data-post-recurring=\"" + escapeHTML(item.recurringId) + "\" data-scheduled-date=\"" + escapeHTML(item.scheduledDate) + "\">Potwierdź kwotę</button>";
+      }
+      if (!item.complete && item.kind === "goal") {
+        action = "<button class=\"button button-soft compact-button\" type=\"button\" data-plan-goal=\"" + escapeHTML(item.targetId) + "\" data-plan-amount=\"" + item.remaining + "\" data-plan-date=\"" + isoDate(item.date) + "\">Wpłać " + escapeHTML(money(item.remaining)) + "</button>";
+      }
+      if (!item.complete && item.kind === "debt") {
+        action = "<button class=\"button button-soft compact-button\" type=\"button\" data-plan-debt=\"" + escapeHTML(item.targetId) + "\" data-plan-amount=\"" + item.remaining + "\" data-plan-date=\"" + isoDate(item.date) + "\">Zapłać " + escapeHTML(money(item.remaining)) + "</button>";
+      }
+      return "<div class=\"month-plan-item is-" + escapeHTML(item.kind) + (item.complete ? " is-complete" : "") + "\">" +
+        "<div class=\"plan-check\">" + (item.complete ? "✓" : formattedDate(isoDate(item.date)).slice(0, 5)) + "</div>" +
+        "<div class=\"plan-main\"><strong>" + escapeHTML(item.title) + "</strong><span>" + escapeHTML(item.subtitle) + "</span>" +
+        "<div class=\"plan-progress\"><i style=\"width:" + percent + "%\"></i></div></div>" +
+        "<div class=\"plan-values\"><span>Przewidywana " + escapeHTML(money(item.planned)) + "</span><strong>" + (item.complete ? "Faktyczna " + escapeHTML(money(item.actual)) + (Math.abs(item.actual - item.planned) > .004 ? " (" + (item.actual > item.planned ? "+" : "−") + escapeHTML(money(Math.abs(item.actual - item.planned))) + ")" : "") : "Oczekuje " + escapeHTML(money(item.remaining))) + "</strong></div>" + action + "</div>";
+    }).join("");
+  }
+
+  function renderMonthTabs() {
+    $("#month-tabs").innerHTML = MONTHS.map(function (month, index) {
+      return "<button class=\"month-tab " + (state.month === index ? "is-active" : "") + "\" type=\"button\" data-month=\"" + index + "\" aria-pressed=\"" + (state.month === index ? "true" : "false") + "\">" + MONTHS_SHORT[index] + "</button>";
+    }).join("");
+  }
+
+  function renderMonths() {
+    renderMonthTabs();
+    var list = monthTransactions(state.month);
+    var stats = monthStats(state.month);
+    var balances = balancesBeforeMonth(state.month);
+    var available = balances.available;
+    var reserve = balances.reserve;
+    $("#selected-month-title").textContent = MONTHS[state.month] + " " + currentYear();
+    $("#month-entry-count").textContent = list.length + (list.length === 1 ? " wpis" : " wpisów");
+    $("#month-income").textContent = money(stats.income);
+    $("#month-expenses").textContent = money(stats.expense);
+    $("#month-targets").textContent = money(stats.targets);
+    var rows = [];
+    list.forEach(function (transaction) {
+      var delta = impact(transaction);
+      available += delta.available;
+      reserve += delta.reserve;
+      var out = delta.available < 0;
+      rows.push("<tr>" +
+        "<td data-label=\"Data\">" + escapeHTML(formattedDate(transaction.date)) + "</td>" +
+        "<td data-label=\"Rodzaj\">" + escapeHTML(TYPE_LABELS[transaction.type] || transaction.type) + "</td>" +
+        "<td data-label=\"Konto\">" + escapeHTML(transaction.type === "transfer" ? accountName(transaction.accountId) + " → " + accountName(transaction.toAccountId) : accountName(transaction.accountId)) + "</td>" +
+        "<td data-label=\"Powiązanie\">" + escapeHTML(targetName(transaction)) + "</td>" +
+        "<td data-label=\"Opis\">" + escapeHTML(transaction.description || "—") + "</td>" +
+        "<td data-label=\"Kwota\" class=\"amount " + (out ? "is-out" : "") + "\">" + (transaction.type === "transfer" ? "" : out ? "−" : "+") + escapeHTML(money(transaction.amount)) + "</td>" +
+        "<td data-label=\"Saldo dostępne\" class=\"balance " + (available < 0 ? "negative" : "") + "\">" + escapeHTML(money(available)) + "</td>" +
+        "<td data-label=\"Działania\"><div class=\"row-actions\">" +
+        "<button class=\"tiny-button\" type=\"button\" data-edit-transaction=\"" + escapeHTML(transaction.id) + "\" aria-label=\"Edytuj\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button>" +
+        "<button class=\"tiny-button is-delete\" type=\"button\" data-delete-transaction=\"" + escapeHTML(transaction.id) + "\" aria-label=\"Usuń\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button>" +
+        "</div></td></tr>");
+    });
+    $("#transactions-table").innerHTML = rows.length ? rows.join("") : "<tr><td class=\"empty-table-cell\" colspan=\"8\"><div class=\"empty-state\">Brak operacji w tym miesiącu. Kliknij „Dodaj operację”.</div></td></tr>";
+    $("#month-ending").textContent = money(available);
+    $("#month-ending").classList.toggle("negative", available < 0);
+    $("#month-reserve-ending").textContent = "Rezerwa: " + money(reserve);
+    renderMonthPlan();
+  }
+
+  function targetStatusHTML(info) {
+    return "<span class=\"status-badge " + info.className + "\">" + escapeHTML(info.text) + "</span>";
+  }
+
+  function renderGoals() {
+    var savedTotal = data.goals.reduce(function (sum, goal) { return sum + goalSaved(goal); }, 0);
+    var targetTotal = data.goals.reduce(function (sum, goal) { return sum + number(goal.target); }, 0);
+    var complete = data.goals.filter(function (goal) { return goalRemaining(goal) <= 0; }).length;
+    var recommendedTotal = data.goals.reduce(function (sum, goal) {
+      var plan = goalPlan(goal);
+      return sum + (plan.remaining > 0 && !plan.impossible ? plan.recommended : 0);
+    }, 0);
+    $("#goals-summary").innerHTML =
+      "<div class=\"summary-item\"><span>Kwota docelowa</span><strong>" + escapeHTML(money(targetTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Odłożono automatycznie</span><strong>" + escapeHTML(money(savedTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Zalecane najbliższe wpłaty</span><strong>" + escapeHTML(money(recommendedTotal)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Osiągnięte cele</span><strong>" + complete + " z " + data.goals.length + "</strong></div>";
+    var node = $("#goals-grid");
+    if (!data.goals.length) {
+      node.innerHTML = "<div class=\"empty-targets\"><div><strong>Nie masz jeszcze celów</strong><span>Dodaj kwotę, termin i częstotliwość. Aplikacja sama wyliczy plan wpłat.</span></div></div>";
+      return;
+    }
+    node.innerHTML = data.goals.map(function (goal, index) {
+      var plan = goalPlan(goal);
+      var percent = number(goal.target) > 0 ? Math.min(plan.saved / number(goal.target) * 100, 100) : 0;
+      var info = deadlineInfo(goal.deadline, plan.remaining <= 0);
+      var status = plan.impossible ? "<span class=\"status-badge is-overdue\">Plan wymaga zmiany</span>" : targetStatusHTML(info);
+      var next = plan.nextDate ? formattedDate(isoDate(plan.nextDate)) : "Brak terminu";
+      var projected = plan.projected ? formattedDate(isoDate(plan.projected)) : "Brak danych";
+      var warning = plan.impossible ? "<div class=\"plan-warning\">" + (plan.capExceeded ? "Zalecana wpłata jest wyższa niż ustawione maksimum." : "Brakuje terminów wpłat przed końcem celu.") + "</div>" : "";
+      return "<article class=\"target-card target-card-wide\" style=\"animation-delay:" + (index * .05) + "s\">" +
+        "<div class=\"target-head\"><div><h3>" + escapeHTML(goal.name) + "</h3><p>Cel: " + escapeHTML(money(goal.target)) + "</p></div>" +
+        "<div class=\"target-menu\"><button class=\"tiny-button\" type=\"button\" data-edit-goal=\"" + escapeHTML(goal.id) + "\" aria-label=\"Edytuj cel\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button>" +
+        "<button class=\"tiny-button is-delete\" type=\"button\" data-delete-goal=\"" + escapeHTML(goal.id) + "\" aria-label=\"Usuń cel\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button></div></div>" +
+        "<div class=\"target-progress-row\"><div class=\"progress-ring\" style=\"--progress:" + (percent * 3.6) + "deg\"><div><strong>" + Math.round(percent) + "%</strong><span>postępu</span></div></div>" +
+        "<div class=\"recommended-box\"><span>Zalecana wpłata</span><strong>" + escapeHTML(money(plan.recommended)) + "</strong><small>" + escapeHTML(CADENCE_LABELS[goal.cadence]) + " • najbliższa " + escapeHTML(next) + "</small></div></div>" +
+        warning +
+        "<div class=\"target-numbers target-numbers-three\"><div class=\"target-number\"><span>Odłożono</span><strong>" + escapeHTML(money(plan.saved)) + "</strong></div><div class=\"target-number\"><span>Wypłacono</span><strong>" + escapeHTML(money(plan.withdrawn)) + "</strong></div><div class=\"target-number\"><span>Zostało</span><strong>" + escapeHTML(money(plan.remaining)) + "</strong></div></div>" +
+        "<div class=\"schedule-details\"><div><span>Tempo</span><strong class=\"" + plan.paceClass + "\">" + escapeHTML(plan.paceText) + "</strong></div><div><span>Prognozowany finał</span><strong>" + escapeHTML(projected) + "</strong></div></div>" +
+        "<div class=\"target-footer\">" + status + "<span class=\"target-tag\">do " + escapeHTML(formattedDate(goal.deadline)) + "</span></div>" +
+        "<div class=\"target-actions\"><button class=\"button button-primary compact-button\" type=\"button\" data-pay-goal=\"" + escapeHTML(goal.id) + "\">Wpłać</button>" +
+        "<button class=\"button button-soft compact-button\" type=\"button\" data-withdraw-goal=\"" + escapeHTML(goal.id) + "\" " + (plan.saved <= 0 ? "disabled" : "") + ">W
