@@ -1,0 +1,186 @@
+urn;
+    data.budgets = data.budgets.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto kopertę.");
+    renderAll();
+  }
+
+  function openAccountDialog(id) {
+    state.editingAccount = id || null;
+    $("#account-form").reset();
+    $("#account-error").textContent = "";
+    var account = id ? data.accounts.find(function (item) { return item.id === id; }) : null;
+    if (account) {
+      $("#account-name").value = account.name;
+      $("#account-type").value = account.type;
+      $("#account-opening").value = accountOpening(account);
+      $("#account-spending-limit").checked = account.includeInSpendingLimit !== false;
+      $("#account-active").checked = account.active !== false;
+      $("#account-dialog-title").textContent = "Edytuj konto";
+    } else {
+      $("#account-type").value = "bank";
+      $("#account-opening").value = 0;
+      $("#account-spending-limit").checked = true;
+      $("#account-active").checked = true;
+      $("#account-dialog-title").textContent = "Dodaj konto";
+    }
+    openDialog("account-dialog");
+  }
+
+  function submitAccount(event) {
+    event.preventDefault();
+    var name = $("#account-name").value.trim();
+    var type = $("#account-type").value;
+    var opening = number($("#account-opening").value);
+    var error = $("#account-error");
+    error.textContent = "";
+    if (!name || ["cash", "bank", "savings"].indexOf(type) < 0) {
+      error.textContent = "Podaj nazwę i prawidłowy rodzaj konta.";
+      return;
+    }
+    var existing = data.accounts.find(function (item) { return item.id === state.editingAccount; });
+    var otherCash = data.accounts.some(function (item) { return item.type === "cash" && (!existing || item.id !== existing.id); });
+    if (existing && existing.type === "cash" && type !== "cash" && !otherCash) {
+      error.textContent = "Zostaw przynajmniej jedno miejsce typu Gotówka.";
+      return;
+    }
+    var openings = existing ? Object.assign({}, existing.openingBalances) : {};
+    openings[String(currentYear())] = opening;
+    var account = {
+      id: existing ? existing.id : uid("account"),
+      name: name,
+      type: type,
+      currency: "PLN",
+      openingBalances: openings,
+      active: $("#account-active").checked,
+      includeInSpendingLimit: $("#account-spending-limit").checked,
+      createdAt: existing ? existing.createdAt : new Date().toISOString()
+    };
+    if (existing) data.accounts = data.accounts.map(function (item) { return item.id === existing.id ? account : item; });
+    else data.accounts.push(account);
+    var cash = mainCashAccount();
+    if (cash) data.settings.balances[String(currentYear())].available = accountOpening(cash);
+    state.editingAccount = null;
+    closeDialog("account-dialog");
+    markDirty(existing ? "Zmieniono konto." : "Dodano konto.");
+    renderAll();
+  }
+
+  function deleteAccount(id) {
+    var account = data.accounts.find(function (item) { return item.id === id; });
+    if (!account) return;
+    if (data.transactions.some(function (transaction) { return transaction.accountId === id || transaction.toAccountId === id; }) || data.recurring.some(function (item) { return item.accountId === id; })) {
+      showToast("Konto ma powiązane operacje lub harmonogram. Ustaw je jako nieaktywne zamiast usuwać.");
+      return;
+    }
+    if (account.type === "cash" && !data.accounts.some(function (item) { return item.id !== id && item.type === "cash"; })) {
+      showToast("Program potrzebuje przynajmniej jednego miejsca typu Gotówka.");
+      return;
+    }
+    if (!window.confirm("Usunąć konto „" + account.name + "”?")) return;
+    data.accounts = data.accounts.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto konto.");
+    renderAll();
+  }
+
+  function statementSuggestedType(row) {
+    if (number(row.amount) < 0 && /(^|\s)(atm|bankomat)|wypłat.*gotówk/i.test(String(row.description || ""))) return "transfer";
+    return number(row.amount) >= 0 ? "income" : "expense";
+  }
+
+  function openStatementImport(accountId) {
+    if (!desktop || !modules().bankAccounts || !modules().statementImport) {
+      showToast("Włącz konta bankowe i import wyciągów w ustawieniach.");
+      return;
+    }
+    var banks = activeAccounts().filter(function (account) { return account.type !== "cash"; });
+    if (!banks.length) {
+      showToast("Najpierw dodaj aktywne konto bankowe.");
+      return;
+    }
+    $("#statement-account").innerHTML = banks.map(function (account) {
+      return "<option value=\"" + escapeHTML(account.id) + "\">" + escapeHTML(account.name) + "</option>";
+    }).join("");
+    $("#statement-account").disabled = false;
+    if (banks.some(function (account) { return account.id === accountId; })) $("#statement-account").value = accountId;
+    state.statementPreview = null;
+    $("#statement-file-name").textContent = "—";
+    $("#statement-summary").textContent = "Wybierz plik CSV wyeksportowany z banku";
+    $("#statement-warnings").innerHTML = "";
+    $("#statement-preview-body").innerHTML = "<tr><td colspan=\"6\" class=\"empty-table-cell\">Plik nie został jeszcze wybrany.</td></tr>";
+    $("#confirm-statement-import").disabled = true;
+    openDialog("statement-dialog");
+  }
+
+  async function chooseStatementFile() {
+    if (!desktop) return;
+    var accountId = $("#statement-account").value;
+    var fingerprints = data.transactions.map(function (transaction) { return transaction.importFingerprint; }).filter(Boolean);
+    $("#choose-statement-file").disabled = true;
+    $("#statement-summary").textContent = "Odczytywanie pliku…";
+    try {
+      var result = await desktop.statements.preview(accountId, fingerprints);
+      if (!result || result.canceled) {
+        $("#statement-summary").textContent = "Nie wybrano pliku";
+        return;
+      }
+      if (!result.ok) throw new Error(result.error || "Nie udało się odczytać wyciągu.");
+      state.statementPreview = { accountId: accountId, result: result };
+      renderStatementPreview();
+    } catch (error) {
+      state.statementPreview = null;
+      $("#statement-summary").textContent = "Nie udało się odczytać pliku";
+      $("#statement-preview-body").innerHTML = "<tr><td colspan=\"6\" class=\"empty-table-cell\">" + escapeHTML(error.message || String(error)) + "</td></tr>";
+      $("#confirm-statement-import").disabled = true;
+    } finally {
+      $("#choose-statement-file").disabled = false;
+    }
+  }
+
+  function renderStatementPreview() {
+    var preview = state.statementPreview;
+    if (!preview) return;
+    var result = preview.result;
+    $("#statement-account").disabled = true;
+    var fresh = result.rows.filter(function (row) { return !row.duplicate; }).length;
+    $("#statement-file-name").textContent = result.fileName;
+    $("#statement-summary").textContent = fresh + " nowych • " + (result.rows.length - fresh) + " duplikatów • separator: " + result.delimiter;
+    $("#statement-warnings").innerHTML = (result.warnings || []).map(function (warning) { return "<div>! " + escapeHTML(warning) + "</div>"; }).join("");
+    $("#statement-preview-body").innerHTML = result.rows.map(function (row, index) {
+      var suggested = statementSuggestedType(row);
+      var typeOptions = [
+        ["income", "Wpływ"], ["expense", "Wydatek"], ["transfer", "Transfer do gotówki"]
+      ].map(function (option) {
+        return "<option value=\"" + option[0] + "\" " + (suggested === option[0] ? "selected" : "") + ">" + option[1] + "</option>";
+      }).join("");
+      return "<tr class=\"" + (row.duplicate ? "is-muted" : "") + "\"><td><input class=\"statement-check\" data-statement-index=\"" + index + "\" type=\"checkbox\" " + (row.duplicate ? "disabled" : "checked") + "></td>" +
+        "<td data-label=\"Data\">" + escapeHTML(formattedDate(row.date)) + "</td>" +
+        "<td data-label=\"Rodzaj\"><select class=\"statement-type\" data-statement-type=\"" + index + "\" " + (row.duplicate ? "disabled" : "") + ">" + typeOptions + "</select></td>" +
+        "<td data-label=\"Opis\">" + escapeHTML(row.description) + "</td>" +
+        "<td data-label=\"Kwota\" class=\"amount " + (number(row.amount) < 0 ? "is-out" : "") + "\">" + escapeHTML(money(Math.abs(number(row.amount)))) + "</td>" +
+        "<td data-label=\"Status\"><span class=\"status-badge " + (row.duplicate ? "" : "is-done") + "\">" + (row.duplicate ? "Duplikat" : "Nowa") + "</span></td></tr>";
+    }).join("");
+    result.rows.forEach(function (row, index) {
+      var select = $("[data-statement-type=\"" + index + "\"]");
+      if (select) select.value = statementSuggestedType(row);
+    });
+    $("#confirm-statement-import").disabled = fresh === 0;
+  }
+
+  function confirmStatementImport() {
+    var preview = state.statementPreview;
+    if (!preview) return;
+    var cash = mainCashAccount();
+    var existing = new Set(data.transactions.map(function (transaction) { return transaction.importFingerprint; }).filter(Boolean));
+    var added = 0;
+    $$(".statement-check:checked").forEach(function (checkbox) {
+      var index = Number(checkbox.getAttribute("data-statement-index"));
+      var row = preview.result.rows[index];
+      if (!row || row.duplicate || existing.has(row.fingerprint)) return;
+      var typeNode = $("[data-statement-type=\"" + index + "\"]");
+      var type = typeNode ? typeNode.value : statementSuggestedType(row);
+      if (type === "transfer" && (!cash || cash.id === preview.accountId)) type = "expense";
+      var category = "";
+      if (type === "income") category = data.settings.categories.indexOf(row.category) >= 0 ? row.category : (data.settings.categories.indexOf("Dodatkowy wpływ") >= 0 ? "Dodatkowy wpływ" : data.settings.categories[0]);
+      if (type === "expense") category = data.settings.categories.indexOf(row.category) >= 0 ? row.category : (data.settings.categories.indexOf("Inne") >= 0 ? "Inne" : data.settings.categories[0]);
+      data.transactions.push({
+        id: uid("tx"), date: row.date, type: type, category: category, targetId: "", recurringId: "", schedu
