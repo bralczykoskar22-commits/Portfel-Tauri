@@ -1,0 +1,146 @@
+  });
+    });
+    return events.sort(function (a, b) { return a.date.getTime() - b.date.getTime(); });
+  }
+
+  function renderCalendar() {
+    var year = currentYear();
+    var month = state.planMonth;
+    var events = calendarEvents(month);
+    $("#calendar-title").textContent = MONTHS[month] + " " + year;
+    var first = startOfMonth(year, month);
+    var dayOffset = (first.getDay() + 6) % 7;
+    var days = endOfMonth(year, month).getDate();
+    var html = ["<div class=\"calendar-weekday\">Pon</div><div class=\"calendar-weekday\">Wt</div><div class=\"calendar-weekday\">Śr</div><div class=\"calendar-weekday\">Czw</div><div class=\"calendar-weekday\">Pt</div><div class=\"calendar-weekday\">Sob</div><div class=\"calendar-weekday\">Nie</div>"];
+    for (var empty = 0; empty < dayOffset; empty += 1) html.push("<div class=\"calendar-day is-empty\"></div>");
+    for (var day = 1; day <= days; day += 1) {
+      var date = clampDate(year, month, day);
+      var key = isoDate(date);
+      var dayEvents = events.filter(function (event) { return isoDate(event.date) === key; });
+      var todayClass = key === isoDate(startOfToday()) ? " is-today" : "";
+      html.push("<div class=\"calendar-day" + todayClass + "\"><strong>" + day + "</strong><div class=\"calendar-day-events\">" + dayEvents.slice(0, 3).map(function (event) {
+        return "<i class=\"calendar-dot is-" + event.kind + "\" aria-label=\"" + escapeHTML(event.title) + "\"></i>";
+      }).join("") + (dayEvents.length > 3 ? "<small>+" + (dayEvents.length - 3) + "</small>" : "") + "</div></div>");
+    }
+    $("#calendar-grid").innerHTML = html.join("");
+    $("#calendar-events").innerHTML = events.length ? events.map(function (event) {
+      var sign = event.kind === "recurring" && event.direction === "income" ? "+" : "−";
+      return "<div class=\"calendar-event is-" + event.kind + "\"><time>" + escapeHTML(formattedDate(isoDate(event.date)).slice(0, 5)) + "</time><div><strong>" + escapeHTML(event.title) + "</strong><span>" + (event.kind === "goal" ? "Wpłata na cel" : event.kind === "debt" ? "Rata długu" : "Cykliczny " + (event.direction === "income" ? "wpływ" : "wydatek")) + "</span></div><strong>" + sign + escapeHTML(money(event.amount)) + "</strong></div>";
+    }).join("") : "<div class=\"empty-plan\">Brak zaplanowanych terminów w tym miesiącu.</div>";
+  }
+
+  function renderRecurringConfirmations() {
+    var items = plannedItemsForMonth(state.planMonth).filter(function (item) { return item.kind === "recurring"; });
+    var pending = items.filter(function (item) { return !item.complete; }).length;
+    $("#recurring-confirmations-status").textContent = pending + (pending === 1 ? " oczekujące" : " oczekujących");
+    var node = $("#recurring-confirmations-list");
+    if (!items.length) {
+      node.innerHTML = '<div class="empty-plan">Brak cyklicznych wpływów i wydatków do potwierdzenia w tym miesiącu.</div>';
+      return;
+    }
+    node.innerHTML = items.map(function (item) {
+      var difference = item.actual - item.planned;
+      var details = item.complete
+        ? "Faktyczna: " + money(item.actual) + (Math.abs(difference) > .004 ? " • różnica " + (difference > 0 ? "+" : "−") + money(Math.abs(difference)) : " • zgodna z planem")
+        : "Przewidywana: " + money(item.planned);
+      var action = item.complete
+        ? '<span class="confirmation-badge is-done">Potwierdzono</span>'
+        : '<button class="button button-primary compact-button" type="button" data-post-recurring="' + escapeHTML(item.recurringId) + '" data-scheduled-date="' + escapeHTML(item.scheduledDate) + '">Potwierdź kwotę</button>';
+      return '<div class="confirmation-item' + (item.complete ? ' is-complete' : '') + '">' +
+        '<time>' + escapeHTML(formattedDate(item.scheduledDate)) + '</time>' +
+        '<div><strong>' + escapeHTML(item.title) + '</strong><span>' + escapeHTML(details) + '</span></div>' + action + '</div>';
+    }).join("");
+  }
+
+  function renderPlan() {
+    renderPlanMonthTabs();
+    $("#recurring-module-card").hidden = !modules().recurring;
+    $("#budget-module-card").hidden = !modules().categoryBudgets;
+    if (modules().recurring) renderRecurring();
+    if (modules().categoryBudgets) renderBudgets();
+    renderRecurringConfirmations();
+    renderCalendar();
+  }
+
+  function forecastRows() {
+    var balance = totalOpeningAvailable();
+    var today = startOfToday();
+    return MONTHS.map(function (_, month) {
+      var actual = monthTransactions(month).reduce(function (sum, transaction) { return sum + impact(transaction).available; }, 0);
+      var plannedIncome = 0;
+      var plannedOutflow = 0;
+      var monthDate = endOfMonth(currentYear(), month);
+      var includePlan = monthDate.getTime() >= today.getTime();
+      if (includePlan) {
+        plannedItemsForMonth(month).forEach(function (item) {
+          if (item.complete || item.remaining <= 0) return;
+          if (item.kind === "recurring" && item.direction === "income") plannedIncome += item.remaining;
+          else plannedOutflow += item.remaining;
+        });
+      }
+      balance += actual + plannedIncome - plannedOutflow;
+      return { month: month, actual: actual, plannedIncome: plannedIncome, plannedOutflow: plannedOutflow, balance: balance };
+    });
+  }
+
+  function renderForecastChart(rows) {
+    var width = 840;
+    var height = 300;
+    var left = 58;
+    var right = 18;
+    var top = 20;
+    var bottom = 42;
+    var plotWidth = width - left - right;
+    var plotHeight = height - top - bottom;
+    var values = rows.map(function (row) { return row.balance; });
+    var min = Math.min.apply(null, values.concat([0]));
+    var max = Math.max.apply(null, values.concat([0]));
+    if (max === min) max = min + 1;
+    function x(index) { return left + plotWidth * index / 11; }
+    function y(value) { return top + (max - value) / (max - min) * plotHeight; }
+    var line = rows.map(function (row, index) { return (index ? "L" : "M") + x(index) + " " + y(row.balance); }).join(" ");
+    var area = line + " L" + x(11) + " " + (top + plotHeight) + " L" + x(0) + " " + (top + plotHeight) + " Z";
+    var svg = ["<svg viewBox=\"0 0 " + width + " " + height + "\" role=\"img\" aria-label=\"Prognozowane saldo w kolejnych miesiącach\"><defs><linearGradient id=\"forecastArea\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop stop-color=\"var(--primary)\" stop-opacity=\".28\"></stop><stop offset=\"1\" stop-color=\"var(--primary)\" stop-opacity=\"0\"></stop></linearGradient></defs>"];
+    for (var grid = 0; grid <= 4; grid += 1) {
+      var value = min + (max - min) * grid / 4;
+      var gridY = y(value);
+      svg.push("<line x1=\"" + left + "\" y1=\"" + gridY + "\" x2=\"" + (width - right) + "\" y2=\"" + gridY + "\" stroke=\"var(--border)\"></line><text x=\"" + (left - 8) + "\" y=\"" + (gridY + 4) + "\" text-anchor=\"end\" fill=\"var(--muted)\" font-size=\"10\">" + escapeHTML(compactMoney(value)) + "</text>");
+    }
+    if (min < 0 && max > 0) svg.push("<line x1=\"" + left + "\" y1=\"" + y(0) + "\" x2=\"" + (width - right) + "\" y2=\"" + y(0) + "\" stroke=\"var(--danger)\" stroke-width=\"1.5\"></line>");
+    svg.push("<path d=\"" + area + "\" fill=\"url(#forecastArea)\"></path><path class=\"forecast-line\" d=\"" + line + "\" fill=\"none\" stroke=\"var(--primary)\" stroke-width=\"4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"></path>");
+    rows.forEach(function (row, index) {
+      svg.push("<circle class=\"forecast-point\" cx=\"" + x(index) + "\" cy=\"" + y(row.balance) + "\" r=\"5\" fill=\"var(--surface)\" stroke=\"var(--primary)\" stroke-width=\"3\"><title>" + MONTHS[index] + ": " + escapeHTML(money(row.balance)) + "</title></circle><text x=\"" + x(index) + "\" y=\"" + (height - 14) + "\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"10\">" + MONTHS_SHORT[index] + "</text>");
+    });
+    svg.push("</svg>");
+    $("#forecast-chart").innerHTML = svg.join("");
+  }
+
+  function renderAnalytics() {
+    var rows = forecastRows();
+    var lowest = rows.reduce(function (selected, row) { return row.balance < selected.balance ? row : selected; }, rows[0]);
+    var outflows = rows.reduce(function (sum, row) { return sum + row.plannedOutflow; }, 0);
+    $("#forecast-ending").textContent = money(rows[11].balance);
+    $("#forecast-ending").classList.toggle("negative", rows[11].balance < 0);
+    $("#forecast-lowest").textContent = money(lowest.balance);
+    $("#forecast-lowest").classList.toggle("negative", lowest.balance < 0);
+    $("#forecast-lowest-month").textContent = MONTHS[lowest.month] + " " + currentYear();
+    $("#forecast-outflows").textContent = money(outflows);
+    renderForecastChart(rows);
+    $("#forecast-table").innerHTML = rows.map(function (row) {
+      return "<tr><td data-label=\"Miesiąc\"><strong>" + MONTHS[row.month] + "</strong></td><td data-label=\"Rzeczywiste\" class=\"amount " + (row.actual < 0 ? "is-out" : "") + "\">" + escapeHTML(money(row.actual)) + "</td><td data-label=\"Planowane wpływy\">" + escapeHTML(money(row.plannedIncome)) + "</td><td data-label=\"Planowane wypływy\">" + escapeHTML(money(row.plannedOutflow)) + "</td><td data-label=\"Prognozowane saldo\" class=\"balance " + (row.balance < 0 ? "negative" : "") + "\">" + escapeHTML(money(row.balance)) + "</td></tr>";
+    }).join("");
+  }
+
+  function renderBackups(errorMessage) {
+    var node = $("#backups-list");
+    if (!node) return;
+    if (errorMessage) {
+      node.innerHTML = "<div class=\"empty-backups\">" + escapeHTML(errorMessage) + "</div>";
+      return;
+    }
+    if (!backups.length) {
+      node.innerHTML = "<div class=\"empty-backups\">Pierwsza kopia powstanie przy najbliższym zapisie.</div>";
+      return;
+    }
+    node.innerHTML = backups.map(function (backup, index) {
+      return "<div class=\"backup-item\"><div><strong>" + (index === 0 ? "Najnowsza kopia" : "Kopia " + (index + 1)) + "</strong><span>" + escapeHTML(formattedDateTime(backup.createdAt)) + " • " + Math.max(1, Math.round(number(backup.size) / 1024)) + " 
