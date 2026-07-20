@@ -1,0 +1,288 @@
+(function () {
+  "use strict";
+
+  var desktop = window.portfelDesktop || null;
+  var API_URL = "/api/data";
+  var BACKUPS_URL = "/api/backups";
+  var RESTORE_URL = "/api/restore";
+  var MONTHS = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"];
+  var MONTHS_SHORT = ["Sty", "Lut", "Mar", "Kwi", "Maj", "Cze", "Lip", "Sie", "Wrz", "Paź", "Lis", "Gru"];
+  var DEFAULT_CATEGORIES = [
+    "Wypłata", "Dodatkowy wpływ", "Mieszkanie", "Rachunki", "Żywność",
+    "Transport", "Zdrowie", "Ubezpieczenia", "Spłata długów", "Dom",
+    "Odzież", "Dzieci", "Zwierzęta", "Rozrywka", "Rozwój",
+    "Prezenty", "Podróże", "Inne"
+  ];
+  var TYPE_LABELS = {
+    income: "Wpływ",
+    expense: "Wydatek",
+    goal: "Wpłata na cel",
+    goal_withdraw: "Wypłata z celu",
+    debt: "Wpłata na dług",
+    reserve_in: "Do rezerwy",
+    reserve_out: "Z rezerwy",
+    transfer: "Transfer"
+  };
+  var PAGE_META = {
+    dashboard: ["Podsumowanie", "Roczny widok"],
+    months: ["Miesiące", "Rejestr gotówki"],
+    goals: ["Cele", "Oszczędzanie"],
+    debts: ["Długi", "Spłacanie"],
+    plan: ["Plan", "Kalendarz i automatyzacja"],
+    analytics: ["Analizy", "Prognoza i raporty"],
+    accounts: ["Konta", "Gotówka i bank"],
+    settings: ["Ustawienia", "Lokalne dane"]
+  };
+  var DEFAULT_MODULES = {
+    bankAccounts: false,
+    statementImport: false,
+    alerts: true,
+    dailyLimit: true,
+    weeklyLimit: true,
+    interest: true,
+    recurring: true,
+    categoryBudgets: true
+  };
+  var CADENCE_LABELS = {
+    monthly: "co miesiąc",
+    weekly: "co tydzień",
+    payday: "przy wypłacie"
+  };
+  var moneyFormatter = new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" });
+  var dateFormatter = new Intl.DateTimeFormat("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  var dateTimeFormatter = new Intl.DateTimeFormat("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  var toastTimer = null;
+  var backups = [];
+  var profiles = [];
+  var activeProfile = null;
+  var pendingProfileId = null;
+  var data = null;
+  var dirty = false;
+  var saving = false;
+  var changeRevision = 0;
+  var appInfo = null;
+  var updateStatus = null;
+  var state = {
+    page: "dashboard",
+    month: 0,
+    planMonth: 0,
+    editingTransaction: null,
+    editingGoal: null,
+    editingDebt: null,
+    editingRecurring: null,
+    editingBudget: null,
+    editingAccount: null,
+    transactionPreset: null,
+    statementPreview: null
+  };
+
+  function $(selector) {
+    return document.querySelector(selector);
+  }
+
+  function $$(selector) {
+    return Array.prototype.slice.call(document.querySelectorAll(selector));
+  }
+
+  function number(value) {
+    var parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function money(value) {
+    return moneyFormatter.format(number(value));
+  }
+
+  function escapeHTML(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function uid(prefix) {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return prefix + "-" + window.crypto.randomUUID();
+    }
+    return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  }
+
+  function dateFromISO(value) {
+    if (!value) return null;
+    var date = new Date(value + "T00:00:00");
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function isoDate(date) {
+    return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+  }
+
+  function formattedDate(value) {
+    var date = dateFromISO(value);
+    return date ? dateFormatter.format(date) : "Bez terminu";
+  }
+
+  function formattedDateTime(value) {
+    if (!value) return "Jeszcze nie zapisano";
+    var date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Jeszcze nie zapisano";
+    return dateTimeFormatter.format(date);
+  }
+
+  function startOfToday() {
+    var now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  function startOfMonth(year, month) {
+    return new Date(year, month, 1);
+  }
+
+  function endOfMonth(year, month) {
+    return new Date(year, month + 1, 0);
+  }
+
+  function clampDate(year, month, day) {
+    return new Date(year, month, Math.min(Math.max(1, day), endOfMonth(year, month).getDate()));
+  }
+
+  function addDays(date, count) {
+    var copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    copy.setDate(copy.getDate() + count);
+    return copy;
+  }
+
+  function addMonths(date, count) {
+    return clampDate(date.getFullYear(), date.getMonth() + count, date.getDate());
+  }
+
+  function inRange(date, start, end) {
+    return date && date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+  }
+
+  function scheduleDates(cadence, day, scheduleStart, scheduleEnd, rangeStart, rangeEnd) {
+    var first = dateFromISO(scheduleStart) || rangeStart;
+    var last = dateFromISO(scheduleEnd) || rangeEnd;
+    var start = first.getTime() > rangeStart.getTime() ? first : rangeStart;
+    var end = last.getTime() < rangeEnd.getTime() ? last : rangeEnd;
+    if (start.getTime() > end.getTime()) return [];
+    var dates = [];
+    if (cadence === "weekly") {
+      var wantedDay = Math.min(7, Math.max(1, Math.round(number(day) || 1)));
+      var current = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      var currentDay = ((current.getDay() + 6) % 7) + 1;
+      current = addDays(current, (wantedDay - currentDay + 7) % 7);
+      while (current.getTime() <= end.getTime()) {
+        dates.push(new Date(current.getTime()));
+        current = addDays(current, 7);
+      }
+      return dates;
+    }
+    var cursor = startOfMonth(start.getFullYear(), start.getMonth());
+    while (cursor.getTime() <= end.getTime()) {
+      var monthlyDate = clampDate(cursor.getFullYear(), cursor.getMonth(), Math.round(number(day) || 1));
+      if (inRange(monthlyDate, start, end)) dates.push(monthlyDate);
+      cursor = startOfMonth(cursor.getFullYear(), cursor.getMonth() + 1);
+    }
+    return dates;
+  }
+
+  function recurringOccurrences(recurring, rangeStart, rangeEnd) {
+    if (!recurring.active) return [];
+    return scheduleDates(
+      recurring.cadence,
+      recurring.day,
+      recurring.startDate,
+      recurring.endDate,
+      rangeStart,
+      rangeEnd
+    );
+  }
+
+  function goalScheduleDates(goal, rangeStart, rangeEnd) {
+    var deadline = dateFromISO(goal.deadline);
+    if (!deadline || rangeStart.getTime() > deadline.getTime()) return [];
+    var limitedEnd = rangeEnd.getTime() < deadline.getTime() ? rangeEnd : deadline;
+    if (goal.cadence === "payday") {
+      var keys = {};
+      data.recurring.filter(function (item) {
+        return item.active && item.type === "income" && (!goal.paydayRecurringId || item.id === goal.paydayRecurringId);
+      }).forEach(function (item) {
+        recurringOccurrences(item, rangeStart, limitedEnd).forEach(function (date) {
+          keys[isoDate(date)] = date;
+        });
+      });
+      return Object.keys(keys).sort().map(function (key) { return keys[key]; });
+    }
+    return scheduleDates(goal.cadence, goal.paymentDay, goal.startDate, goal.deadline, rangeStart, limitedEnd);
+  }
+
+  function debtScheduleDates(debt, rangeStart, rangeEnd) {
+    return scheduleDates("monthly", debt.paymentDay, String(debt.createdAt || "").slice(0, 10), debt.deadline, rangeStart, rangeEnd);
+  }
+
+  function uniqueLines(value) {
+    var seen = {};
+    return String(value || "")
+      .split(/\r?\n/)
+      .map(function (item) { return item.trim(); })
+      .filter(function (item) {
+        var key = item.toLocaleLowerCase("pl");
+        if (!item || seen[key]) return false;
+        seen[key] = true;
+        return true;
+      });
+  }
+
+  function freshData() {
+    var year = new Date().getFullYear();
+    var balances = {};
+    balances[String(year)] = { available: 0, reserve: 0 };
+    return {
+      version: 5,
+      meta: { savedAt: null, createdAt: new Date().toISOString() },
+      settings: {
+        currentYear: year,
+        theme: "light",
+        currency: "PLN",
+        balances: balances,
+        categories: DEFAULT_CATEGORIES.slice(),
+        modules: Object.assign({}, DEFAULT_MODULES),
+        payday: { day: 10, nextDate: "" }
+      },
+      accounts: [{
+        id: "cash-main",
+        name: "Gotówka",
+        type: "cash",
+        currency: "PLN",
+        openingBalances: (function () { var values = {}; values[String(year)] = 0; return values; }()),
+        active: true,
+        includeInSpendingLimit: true,
+        createdAt: new Date().toISOString()
+      }],
+      goals: [],
+      debts: [],
+      recurring: [],
+      budgets: [],
+      transactions: []
+    };
+  }
+
+  function normalizeData(raw) {
+    var base = freshData();
+    if (!raw || typeof raw !== "object") return base;
+    var settings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
+    var year = Math.min(2100, Math.max(2020, Math.round(number(settings.currentYear) || base.settings.currentYear)));
+    var balances = settings.balances && typeof settings.balances === "object" ? settings.balances : {};
+    if (!balances[String(year)]) balances[String(year)] = { available: 0, reserve: 0 };
+    Object.keys(balances).forEach(function (key) {
+      var balance = balances[key] && typeof balances[key] === "object" ? balances[key] : {};
+      balances[key] = {
+        available: Math.max(0, number(balance.available)),
+        reserve: Math.max(0, number(balance.reserve))
+      };
+    });
+    var categories = Array.isArray(settings.categories) ? settings.categories.map(String).filter(Boolean) : [];
+    var modules = Object.assign({}, DEFAULT_MODULES, settings.modules && typeof settings.modules === "object" ? settings.modul
