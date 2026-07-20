@@ -1,0 +1,265 @@
+ → " + accountName(transaction.toAccountId);
+    }
+    if (transaction.type === "reserve_in" || transaction.type === "reserve_out") return "Rezerwa";
+    return transaction.category || "Bez kategorii";
+  }
+
+  function monthStats(month) {
+    var stats = { income: 0, expense: 0, goal: 0, goalWithdraw: 0, debt: 0, reserveIn: 0, reserveOut: 0 };
+    monthTransactions(month).forEach(function (transaction) {
+      if (transaction.type === "income") stats.income += number(transaction.amount);
+      if (transaction.type === "expense") stats.expense += number(transaction.amount);
+      if (transaction.type === "goal") stats.goal += number(transaction.amount);
+      if (transaction.type === "goal_withdraw") stats.goalWithdraw += number(transaction.amount);
+      if (transaction.type === "debt") stats.debt += number(transaction.amount);
+      if (transaction.type === "reserve_in") stats.reserveIn += number(transaction.amount);
+      if (transaction.type === "reserve_out") stats.reserveOut += number(transaction.amount);
+    });
+    stats.targets = stats.goal + stats.debt - stats.goalWithdraw;
+    stats.outflow = stats.expense + stats.goal + stats.debt;
+    return stats;
+  }
+
+  function markDirty(message) {
+    changeRevision += 1;
+    dirty = true;
+    updateSaveState();
+    if (message) showToast(message + " Kliknij „Zapisz”.");
+  }
+
+  function updateSaveState() {
+    var label = $("#save-label");
+    var time = $("#save-time");
+    var button = $("#save-button");
+    var indicator = $("#dirty-indicator");
+    if (saving) {
+      label.textContent = "Zapisywanie…";
+      time.textContent = desktop ? "Lokalna baza SQLite" : "data/budget.json";
+    } else if (dirty) {
+      label.textContent = "Niezapisane zmiany";
+      time.textContent = "Kliknij Zapisz";
+    } else {
+      label.textContent = "Wszystko zapisane";
+      time.textContent = formattedDateTime(data && data.meta && data.meta.savedAt);
+    }
+    button.classList.toggle("is-dirty", dirty && !saving);
+    button.classList.toggle("is-saving", saving);
+    indicator.hidden = !dirty || saving;
+  }
+
+  async function saveToFile() {
+    if (saving || !data) return;
+    var revisionAtStart = changeRevision;
+    var snapshot = JSON.parse(JSON.stringify(data));
+    saving = true;
+    updateSaveState();
+    try {
+      var result;
+      if (desktop) {
+        result = await desktop.data.save(snapshot);
+      } else {
+        var response = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(snapshot)
+        });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Nieznany błąd zapisu");
+      }
+      if (!result || !result.ok) throw new Error(result && result.error || "Nieznany błąd zapisu");
+      data.meta.savedAt = result.savedAt;
+      dirty = changeRevision !== revisionAtStart;
+      showToast(dirty
+        ? "Zapisano wcześniejszy stan. Nowsze zmiany nadal wymagają zapisu."
+        : (desktop ? "Zapisano bezpiecznie w lokalnej bazie." : "Zapisano do pliku data/budget.json."));
+      loadBackups(true);
+    } catch (error) {
+      dirty = true;
+      showToast("Nie udało się zapisać: " + (error.message || error));
+    } finally {
+      saving = false;
+      updateSaveState();
+    }
+  }
+
+  function hideLoadingScreen() {
+    $("#loading-screen").classList.add("is-hidden");
+    window.setTimeout(function () { $("#loading-screen").hidden = true; }, 380);
+  }
+
+  function profileInitial(name) {
+    return String(name || "P").trim().charAt(0).toLocaleUpperCase("pl") || "P";
+  }
+
+  function renderProfiles() {
+    var node = $("#profile-list");
+    node.innerHTML = profiles.length ? profiles.map(function (profile) {
+      return "<button class=\"profile-account\" type=\"button\" data-open-profile=\"" + escapeHTML(profile.id) + "\">" +
+        "<span class=\"profile-account-avatar\">" + escapeHTML(profileInitial(profile.name)) + "</span>" +
+        "<span class=\"profile-account-copy\"><strong>" + escapeHTML(profile.name) + "</strong><span>" + (profile.hasPassword ? "Chronione hasłem" : "Bez hasła") + "</span></span>" +
+        "<span class=\"profile-account-lock\" aria-hidden=\"true\">" + (profile.hasPassword ? "🔒" : "→") + "</span></button>";
+    }).join("") : "<div class=\"profile-empty\"><strong>Nie ma jeszcze żadnego konta.</strong><br>Dodaj pierwsze konto, aby rozpocząć.</div>";
+  }
+
+  function showProfileScreen() {
+    data = null;
+    backups = [];
+    activeProfile = null;
+    pendingProfileId = null;
+    $("#app").hidden = true;
+    $("#connection-error").hidden = true;
+    $("#profile-screen").hidden = false;
+    $("#profile-screen-error").textContent = "";
+    renderProfiles();
+    hideLoadingScreen();
+  }
+
+  async function refreshProfiles() {
+    if (!desktop || !desktop.profiles) return;
+    var result = await desktop.profiles.list();
+    profiles = result && Array.isArray(result.profiles) ? result.profiles : [];
+    renderProfiles();
+  }
+
+  async function enterProfile(result) {
+    activeProfile = result.profile;
+    $("#current-profile-name").textContent = activeProfile.name;
+    $("#current-profile-initial").textContent = profileInitial(activeProfile.name);
+    $("#profile-screen").hidden = true;
+    await loadFromFile(result.data);
+  }
+
+  async function loginToProfile(profileId, password) {
+    $("#profile-screen-error").textContent = "";
+    try {
+      var result = await desktop.profiles.login(profileId, password || "");
+      pendingProfileId = null;
+      closeDialog("profile-login-dialog");
+      await enterProfile(result);
+    } catch (error) {
+      var target = $("#profile-login-dialog").open ? $("#profile-login-error") : $("#profile-screen-error");
+      target.textContent = error.message || String(error);
+    }
+  }
+
+  function openSelectedProfile(profileId) {
+    var profile = profiles.find(function (item) { return item.id === profileId; });
+    if (!profile) return;
+    if (!profile.hasPassword) {
+      loginToProfile(profile.id, "");
+      return;
+    }
+    pendingProfileId = profile.id;
+    $("#profile-login-form").reset();
+    $("#profile-login-error").textContent = "";
+    $("#profile-login-title").textContent = "Otwórz konto „" + profile.name + "”";
+    openDialog("profile-login-dialog");
+    window.setTimeout(function () { $("#profile-login-password").focus(); }, 50);
+  }
+
+  async function submitProfileCreate(event) {
+    event.preventDefault();
+    var error = $("#profile-create-error");
+    error.textContent = "";
+    var name = $("#profile-name").value.trim();
+    var password = $("#profile-password").value;
+    var repeated = $("#profile-password-repeat").value;
+    if (!name) {
+      error.textContent = "Podaj nazwę konta.";
+      return;
+    }
+    if (password !== repeated) {
+      error.textContent = "Hasła nie są takie same.";
+      return;
+    }
+    if (password && password.length < 4) {
+      error.textContent = "Hasło musi mieć co najmniej 4 znaki albo pozostać puste.";
+      return;
+    }
+    try {
+      var result = await desktop.profiles.create(name, password);
+      closeDialog("profile-create-dialog");
+      profiles = profiles.filter(function (profile) { return profile.id !== result.profile.id; });
+      profiles.unshift(result.profile);
+      renderProfiles();
+      await enterProfile(result);
+    } catch (createError) {
+      error.textContent = createError.message || String(createError);
+    }
+  }
+
+  function submitProfileLogin(event) {
+    event.preventDefault();
+    if (pendingProfileId) loginToProfile(pendingProfileId, $("#profile-login-password").value);
+  }
+
+  async function switchProfile() {
+    if (saving) {
+      showToast("Zapis jest w toku. Zmień konto po jego zakończeniu.");
+      return;
+    }
+    if (dirty && !window.confirm("Masz niezapisane zmiany. Zmienić konto i odrzucić te zmiany?")) return;
+    try {
+      if (desktop && desktop.profiles) await desktop.profiles.logout();
+    } catch (error) {
+      showToast("Nie udało się zamknąć konta: " + (error.message || error));
+      return;
+    }
+    dirty = false;
+    saving = false;
+    changeRevision = 0;
+    showProfileScreen();
+    try {
+      await refreshProfiles();
+    } catch (error) {
+      $("#profile-screen-error").textContent = "Nie udało się odświeżyć listy kont: " + (error.message || error);
+    }
+  }
+
+  async function loadFromFile(rawOverride) {
+    try {
+      var raw = rawOverride || null;
+      if (desktop) {
+        if (!raw) raw = await desktop.data.load();
+        var details = await Promise.allSettled([
+          desktop.app.getInfo(),
+          desktop.updater.getStatus()
+        ]);
+        appInfo = details[0].status === "fulfilled" ? details[0].value : null;
+        updateStatus = details[1].status === "fulfilled" ? details[1].value : null;
+      } else {
+        var response = await fetch(API_URL, { cache: "no-store" });
+        if (!response.ok) throw new Error("Serwer nie odpowiada");
+        raw = await response.json();
+      }
+      data = normalizeData(raw);
+      state.month = currentYear() === new Date().getFullYear() ? new Date().getMonth() : 0;
+      state.planMonth = state.month;
+      dirty = number(raw.version) > 0 && number(raw.version) < 5;
+      changeRevision = dirty ? 1 : 0;
+      applyTheme();
+      renderAll();
+      $("#app").hidden = false;
+      $("#profile-screen").hidden = true;
+      $("#connection-error").hidden = true;
+      hideLoadingScreen();
+      loadBackups(true);
+    } catch (error) {
+      $("#loading-screen").hidden = true;
+      $("#app").hidden = true;
+      $("#profile-screen").hidden = true;
+      $("#connection-error").hidden = false;
+    }
+  }
+
+  async function initializeApp() {
+    if (desktop && desktop.profiles) {
+      try {
+        await refreshProfiles();
+        showProfileScreen();
+      } catch (error) {
+        $("#loading-screen").hidden = true;
+        $("#profile-screen").hidden = true;
+        $("#connection-error").hidden = false;
+      }
+      re
