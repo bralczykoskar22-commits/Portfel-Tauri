@@ -1,0 +1,5 @@
+# Te pliki historycznie używają CRLF. Traktuj znak CR jako część zakończenia linii.
+src/index.html -text whitespace=cr-at-eol
+src/assets/styles.css -text whitespace=cr-at-eol
+src/assets/tauri-bridge.js -text whitespace=cr-at-eol
+src/data/budget.json -text whitespace=cr-at-eol
