@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$1"
+mkdir -p "$ROOT"
+cat > "$ROOT/.gitattributes" <<'PORTFEL_EOF_00'
+# Te pliki historycznie używają CRLF. Traktuj znak CR jako część zakończenia linii.
+src/index.html -text whitespace=cr-at-eol
+src/assets/styles.css -text whitespace=cr-at-eol
+src/assets/tauri-bridge.js -text whitespace=cr-at-eol
+src/data/budget.json -text whitespace=cr-at-eol
+PORTFEL_EOF_00
+mkdir -p "$ROOT/.github/workflows"
+cat > "$ROOT/.github/workflows/windows-build.yml" <<'PORTFEL_EOF_01'
+name: Portfel Tauri — Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - tauri-v0.5
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Pamięć podręczna Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Zależności
+        run: npm ci
+
+      - name: Audyt zależności Node.js
+        run: npm run audit
+
+      - name: Test interfejsu
+        run: npm test
+
+      - name: Formatowanie Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Testy Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+
+      - name: Budowanie Portfela
+        run: npm run build
+
+      - name: Przygotuj pełną paczkę
+        shell: pwsh
+        run: |
+          $package = "artifacts/Portfel-Tauri-Windows-x64-v0.5.0-alpha.1"
+          New-Item "$package/Aplikacja" -ItemType Directory -Force | Out-Null
+          New-Item "$package/Instalator" -ItemType Directory -Force | Out-Null
+          New-Item "$package/Kod-zrodlowy/Portfel-Tauri" -ItemType Directory -Force | Out-Null
+
+          Copy-Item "src-tauri/target/release/Portfel.exe" "$package/Aplikacja/Portfel.exe"
+          Copy-Item "src-tauri/target/release/bundle/nsis/*.exe" "$package/Instalator/"
+          Copy-Item "README.md", "TESTOWANIE.md", "CHANGELOG.md", "build-windows.bat" "$package/"
+
+          $source = (Resolve-Path ".").Path
+          $destination = (Resolve-Path "$package/Kod-zrodlowy/Portfel-Tauri").Path
+          robocopy $source $destination /E /XD node_modules target artifacts .git gen /XF *.pdb
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          exit 0
+
+      - name: Opublikuj paczkę testową
+        uses: actions/upload-artifact@v4
+        with:
+          name: Portfel-Tauri-Windows-x64-v0.5.0-alpha.1
+          path: artifacts/Portfel-Tauri-Windows-x64-v0.5.0-alpha.1
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+PORTFEL_EOF_01
+cat > "$ROOT/.gitignore" <<'PORTFEL_EOF_02'
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+PORTFEL_EOF_02
+cat > "$ROOT/CHANGELOG.md" <<'PORTFEL_EOF_03'
+# Historia zmian
+
+## 0.5.0-alpha.1
+
+- dodano animowany ekran wyboru lokalnego konta użytkownika,
+- można tworzyć wiele kont z opcjonalnym hasłem; każde ma osobną bazę SQLite i kopie zapasowe,
+- istniejąca baza jest automatycznie widoczna jako konto „Moje konto”,
+- dodano zmianę konta bez zamykania aplikacji,
+- cykliczne wpływy i wydatki mają zakres „od–do” albo tryb bezterminowy,
+- kwota harmonogramu jest wyraźnie oznaczona jako przewidywana,
+- w zakładce Plan dodano listę operacji oczekujących na potwierdzenie,
+- podczas potwierdzania można wpisać inną kwotę faktyczną, a aplikacja zachowuje plan i pokazuje różnicę,
+- format danych podniesiono do wersji 5 i dodano test całego scenariusza.
+
+## 0.4.0-alpha.2
+
+- zabezpieczono zapis przed utratą informacji o zmianach wykonanych podczas trwającego zapisu,
+- zapis korzysta teraz ze spójnej migawki danych, a nowsze zmiany pozostają oznaczone jako niezapisane,
+- awaria pobierania informacji pomocniczych nie blokuje już uruchomienia danych portfela,
+- import wyciągów odrzuca niemożliwe daty kalendarzowe, np. `31.02.2026`,
+- dodano limit 100 000 operacji w pojedynczym podglądzie CSV i limit rozmiaru zapisywanych danych,
+- uszkodzona wcześniejsza baza nie jest już po cichu zastępowana pustym portfelem,
+- dodano test regresji zapisu wykonywanego równolegle z edycją danych,
+- zaktualizowano `happy-dom` do bezpiecznej wersji i dodano audyt zależności do CI oraz skryptu budowania,
+- przeniesiono politykę CSP również do konfiguracji Tauri.
+
+## 0.4.0-alpha.1
+
+- przywrócono dokładny interfejs i kompletną logikę ostatniej wersji Electron,
+- przywrócono opcjonalne konta gotówkowe, bankowe i oszczędnościowe,
+- przywrócono transfery pomiędzy kontami oraz źródło każdej operacji,
+- przywrócono lokalny import wyciągów CSV z podglądem i wykrywaniem duplikatów,
+- przywrócono wszystkie przełączniki modułów, limity dzienne i tygodniowe,
+- zachowano cele, wypłaty z celów, automatyczne plany, długi i opcjonalne odsetki,
+- ujednolicono bazę z Electron w `%APPDATA%\Portfel\data\portfel.sqlite`,
+- zwiększono historię do 30 plikowych kopii zapasowych,
+- dodano eksport/import JSON, otwieranie folderu danych i pojedynczą instancję,
+- dodano test pełnego scenariusza konta bankowego i transferu.
+
+## 0.3.0-alpha.1
+
+- rozpoczęto migrację aplikacji z Avalonia na Tauri 2,
+- przywrócono bezpośrednio interfejs wcześniejszej wersji webowej/Electron,
+- usunięto zależność od Pythona i lokalnego serwera,
+- zastąpiono zapis JSON natywną bazą SQLite w katalogu danych Windows,
+- dodano automatyczne kopie poprzednich zapisów i ich przywracanie,
+- dodano automatyczny test mostu JavaScript–Tauri,
+- przygotowano instalator NSIS oraz kontrolną kompilację Windows.
+PORTFEL_EOF_03
+cat > "$ROOT/README.md" <<'PORTFEL_EOF_04'
+# Portfel — wersja Tauri
+
+Natywna aplikacja finansowa dla Windows 10/11. Interfejs bazuje na wcześniejszej
+wersji webowej/Electron, ale jest rozwijany dalej dla Tauri. Zachowuje znany
+układ, kolory, animacje, jasny i ciemny motyw oraz sposób obsługi.
+
+## Co działa
+
+- osobny widok każdego z 12 miesięcy i podsumowanie roczne,
+- ręczne wpływy i wydatki bez konieczności posiadania wyciągu bankowego,
+- opcjonalne konta gotówkowe, osobiste i oszczędnościowe,
+- transfery pomiędzy kontami bez zaliczania ich do wydatków,
+- opcjonalny, lokalny import wyciągów CSV z podglądem i wykrywaniem duplikatów,
+- cele z automatycznym wyliczeniem zalecanej wpłaty i przeliczeniem po wypłacie,
+- długi z postępem, terminem, ratą minimalną i oprocentowaniem,
+- harmonogramy cykliczne z datą końcową lub trybem bezterminowym,
+- kwoty przewidywane i faktyczne dla cyklicznych wpływów oraz wydatków,
+- lokalne konta użytkowników z osobnymi bazami i opcjonalnym hasłem,
+- koperty kategorii, alerty i prognozy,
+- opcjonalne limity dzienne i tygodniowe do następnej wypłaty,
+- przełączniki modułów oraz odsetki włączane osobno przy konkretnym długu,
+- jasny i ciemny motyw,
+- przycisk „Zapisz” oraz skrót `Ctrl+S`,
+- lokalna baza SQLite i 30 automatycznych kopii poprzednich zapisów,
+- eksport i import danych JSON.
+
+Program nie używa `localStorage`, nie uruchamia serwera i nie wymaga Pythona.
+Dane finansowe nie są wysyłane do Internetu.
+
+## Dane programu
+
+Na Windows rejestr kont użytkowników znajduje się w:
+
+```text
+%APPDATA%\Portfel\profiles.json
+```
+
+Każde nowe konto ma osobną bazę, standardowo w:
+
+```text
+%APPDATA%\Portfel\profiles\<identyfikator>\data\portfel.sqlite
+```
+
+Istniejąca baza z wcześniejszej wersji jest zachowana jako konto „Moje konto”
+i nadal korzysta z `%APPDATA%\Portfel\data\portfel.sqlite`. Dzięki temu
+aktualizacja nie tworzy pustego portfela i nie przenosi danych bez potrzeby.
+
+Opcjonalne hasło blokuje otwarcie konta w aplikacji. Jest przechowywane jako
+solony, wielokrotnie liczony skrót, ale nie szyfruje całej bazy SQLite ani kopii
+JSON. Pełne szyfrowanie danych pozostaje osobnym etapem rozwoju.
+
+Odinstalowanie programu nie powinno usuwać tej bazy. Przed większą aktualizacją
+warto dodatkowo skorzystać z przycisku „Eksportuj kopię”.
+
+## Uruchomienie gotowej wersji
+
+Najwygodniej uruchomić instalator `Portfel_*_x64-setup.exe`. Można też uruchomić
+sam plik `Portfel.exe`. Windows 10 od wydania 1803 otrzymuje WebView2 wraz z
+systemem; jeśli go brakuje, instalator pobierze oficjalny składnik Microsoft.
+
+## Praca z kodem
+
+Wymagane są:
+
+- Node.js 20 lub nowszy,
+- Rust stable,
+- Windows 10/11 i narzędzia C++ z Visual Studio Build Tools.
+
+Polecenia:
+
+```text
+npm ci
+npm test
+npm run dev
+npm run build
+```
+
+Na Windows można również uruchomić `build-windows.bat`.
+
+## Struktura
+
+- `src/` — interfejs HTML/CSS/JS rozwijany dla wersji Tauri oraz mały most
+  natywnych poleceń,
+- `src-tauri/` — natywne okno, SQLite, kopie danych, import CSV i instalator,
+- `tests/` — automatyczny test interfejsu i mostu Tauri,
+- `.github/workflows/` — kontrolna kompilacja Windows.
+
+Wygenerowane katalogi `node_modules/` i `src-tauri/target/` nie są częścią kodu
+źródłowego i można je zawsze odtworzyć poleceniem `npm ci` oraz kompilacją.
+
+## Aktualizacje
+
+Wersję należy zmienić jednocześnie w `package.json`, `src-tauri/Cargo.toml` i
+`src-tauri/tauri.conf.json`. Następnie uruchamiamy testy, kompilację Windows i
+sprawdzamy zachowanie istniejącej bazy. Mechanizm automatycznych aktualizacji
+zostanie włączony dopiero przed pierwszą stabilną wersją, po przygotowaniu
+podpisywania paczek aktualizacyjnych.
+PORTFEL_EOF_04
+cat > "$ROOT/TESTOWANIE.md" <<'PORTFEL_EOF_05'
+# Testowanie wersji 0.5.0-alpha.1
+
+1. Uruchom program i sprawdź animowany ekran „Wybierz konto”.
+2. Dodaj konto bez hasła, zamknij aplikację i uruchom ją ponownie. Konto musi nadal być widoczne.
+3. Dodaj drugie konto z hasłem. Sprawdź błędne hasło, poprawne hasło oraz zmianę konta przyciskiem w górnym pasku.
+4. Upewnij się, że oba konta mają niezależne operacje, cele, ustawienia i kopie zapasowe.
+5. Gdy na komputerze istnieje wcześniejsza baza `%APPDATA%\Portfel\data\portfel.sqlite`, powinna pojawić się jako „Moje konto”.
+6. W zakładce Plan dodaj cykliczny wpływ, np. wypłatę, z datą rozpoczęcia i zaznacz „Bezterminowo”.
+7. Dodaj cykliczny wydatek z konkretną datą zakończenia. Sprawdź, że po tej dacie nie pojawiają się kolejne terminy.
+8. W polu „Kwota przewidywana” wpisz przykładowo 6000 zł. W sekcji potwierdzeń wybierz „Potwierdź kwotę”.
+9. Wpisz kwotę faktyczną, np. 6214,37 zł. Plan powinien nadal pokazywać 6000 zł, kwotę faktyczną 6214,37 zł oraz różnicę +214,37 zł.
+10. Sprawdź, że sama operacja planowana nie zmienia salda. Saldo ma się zmienić dopiero po potwierdzeniu kwoty.
+11. Kliknij „Zapisz”, zamknij i uruchom program ponownie. Profile, harmonogramy i potwierdzone kwoty muszą pozostać.
+12. Wykonaj dotychczasowe testy kont bankowych, transferów, importu CSV, celów, długów, eksportu i przywracania kopii.
+
+Hasło profilu ogranicza dostęp z poziomu aplikacji, ale w tej wersji nie szyfruje całej bazy SQLite ani eksportów JSON.
+PORTFEL_EOF_05
+cat > "$ROOT/ULEPSZENIA.md" <<'PORTFEL_EOF_06'
+# Portfel Tauri 0.5.0-alpha.1 — konta użytkowników i potwierdzanie planu
+
+## Zrealizowane funkcje
+
+- animowany ekran startowy z listą zapisanych kont i przyciskiem „Dodaj konto”,
+- wiele lokalnych kont użytkowników, każde z osobną bazą SQLite i katalogiem kopii,
+- opcjonalne hasło przechowywane jako solony skrót z 200 000 iteracji SHA-256,
+- automatyczne zachowanie wcześniejszej bazy jako konta „Moje konto”,
+- możliwość zmiany konta z poziomu aplikacji,
+- zakres dat harmonogramu: data rozpoczęcia, data zakończenia albo „Bezterminowo”,
+- rozdzielenie kwoty przewidywanej od faktycznej,
+- potwierdzanie cyklicznej operacji bezpośrednio w zakładce Plan,
+- prezentacja różnicy między planem i rzeczywistą kwotą,
+- format danych wersji 5.
+
+## Ważna informacja o haśle
+
+Hasło blokuje otwarcie profilu w interfejsie. Nie jest zapisywane jawnym tekstem, ale baza SQLite i eksporty JSON nie są jeszcze szyfrowane. Osoba mająca dostęp do plików systemowych może odczytać dane niezależnie od ekranu logowania. Pełne szyfrowanie wymaga osobnego projektu migracji i odzyskiwania klucza.
+
+## Wykonane kontrole
+
+- `npm ci` — OK,
+- podsumowanie audytu wykonane przez `npm ci` — 0 podatności,
+- osobne `npm run audit` — nieukończone z powodu błędu 502 usługi audytu npm,
+- `npm test` — przechodzą scenariusze profili, hasła, bezterminowego planu, kwoty przewidywanej/faktycznej i zapisu podczas edycji,
+- `node --check src/assets/app.js` — OK,
+- kontrola unikalności identyfikatorów HTML — wykonywana w teście.
+
+## Kontrola wymagana przed publikacją
+
+W tym środowisku nie był dostępny toolchain Rust. Na Windows należy uruchomić:
+
+```text
+npm ci
+npm run audit
+npm test
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+npm run build
+```
+
+Dopiero po przejściu tych kontroli wersję należy wysłać na osobną gałąź GitHuba i otworzyć roboczy Pull Request.
+PORTFEL_EOF_06
+cat > "$ROOT/build-windows.bat" <<'PORTFEL_EOF_07'
+@echo off
+setlocal
+chcp 65001 >nul
+cd /d "%~dp0"
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo Brak Node.js. Zainstaluj Node.js 20 lub nowszy.
+  pause
+  exit /b 1
+)
+
+where cargo >nul 2>nul
+if errorlevel 1 (
+  echo Brak Rust. Zainstaluj Rust stable przez rustup.
+  pause
+  exit /b 1
+)
+
+echo [1/4] Instalowanie zależności...
+call npm ci
+if errorlevel 1 goto :failure
+
+echo [2/4] Sprawdzanie zależności...
+call npm run audit
+if errorlevel 1 goto :failure
+
+echo [3/4] Testowanie interfejsu...
+call npm test
+if errorlevel 1 goto :failure
+
+echo [4/4] Budowanie programu i instalatora...
