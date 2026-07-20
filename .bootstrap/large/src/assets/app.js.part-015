@@ -1,0 +1,166 @@
+  var payDebtButton = event.target.closest("[data-pay-debt]");
+    if (payDebtButton) {
+      setPage("months");
+      openTransactionDialog(null, "debt", payDebtButton.getAttribute("data-pay-debt"));
+      return;
+    }
+    var debtHistoryButton = event.target.closest("[data-history-debt]");
+    if (debtHistoryButton) {
+      openTargetHistory("debt", debtHistoryButton.getAttribute("data-history-debt"));
+      return;
+    }
+    var planGoalButton = event.target.closest("[data-plan-goal]");
+    if (planGoalButton) {
+      openTransactionDialog(null, "goal", planGoalButton.getAttribute("data-plan-goal"), planGoalButton.getAttribute("data-plan-amount"), planGoalButton.getAttribute("data-plan-date"));
+      return;
+    }
+    var planDebtButton = event.target.closest("[data-plan-debt]");
+    if (planDebtButton) {
+      openTransactionDialog(null, "debt", planDebtButton.getAttribute("data-plan-debt"), planDebtButton.getAttribute("data-plan-amount"), planDebtButton.getAttribute("data-plan-date"));
+      return;
+    }
+    var postRecurringButton = event.target.closest("[data-post-recurring]");
+    if (postRecurringButton) {
+      var recurringId = postRecurringButton.getAttribute("data-post-recurring");
+      var scheduledDate = postRecurringButton.getAttribute("data-scheduled-date");
+      var recurring = data.recurring.find(function (item) { return item.id === recurringId; });
+      var scheduled = dateFromISO(scheduledDate);
+      if (recurring && scheduled) {
+        state.month = scheduled.getMonth();
+        setPage("months");
+        openTransactionDialog(null, recurring.type, "", recurring.amount, scheduledDate, recurring.id);
+      }
+      return;
+    }
+    var editRecurringButton = event.target.closest("[data-edit-recurring]");
+    if (editRecurringButton) {
+      openRecurringDialog(editRecurringButton.getAttribute("data-edit-recurring"));
+      return;
+    }
+    var deleteRecurringButton = event.target.closest("[data-delete-recurring]");
+    if (deleteRecurringButton) {
+      deleteRecurring(deleteRecurringButton.getAttribute("data-delete-recurring"));
+      return;
+    }
+    var editBudgetButton = event.target.closest("[data-edit-budget]");
+    if (editBudgetButton) {
+      openBudgetDialog(editBudgetButton.getAttribute("data-edit-budget"));
+      return;
+    }
+    var deleteBudgetButton = event.target.closest("[data-delete-budget]");
+    if (deleteBudgetButton) {
+      deleteBudget(deleteBudgetButton.getAttribute("data-delete-budget"));
+      return;
+    }
+    var editAccountButton = event.target.closest("[data-edit-account]");
+    if (editAccountButton) {
+      openAccountDialog(editAccountButton.getAttribute("data-edit-account"));
+      return;
+    }
+    var deleteAccountButton = event.target.closest("[data-delete-account]");
+    if (deleteAccountButton) {
+      deleteAccount(deleteAccountButton.getAttribute("data-delete-account"));
+      return;
+    }
+    var restoreButton = event.target.closest("[data-restore-backup]");
+    if (restoreButton) {
+      restoreBackup(restoreButton.getAttribute("data-restore-backup"));
+    }
+  }
+
+  function bindEvents() {
+    document.addEventListener("click", handleDocumentClick);
+    $("#save-button").addEventListener("click", saveToFile);
+    $("#switch-profile").addEventListener("click", switchProfile);
+    $("#add-profile").addEventListener("click", function () {
+      $("#profile-create-form").reset();
+      $("#profile-create-error").textContent = "";
+      openDialog("profile-create-dialog");
+    });
+    $("#profile-create-form").addEventListener("submit", submitProfileCreate);
+    $("#profile-login-form").addEventListener("submit", submitProfileLogin);
+    $("#theme-toggle").addEventListener("click", toggleTheme);
+    $("#retry-connection").addEventListener("click", function () {
+      if (desktop && desktop.profiles && !activeProfile) initializeApp();
+      else loadFromFile();
+    });
+    $("#mobile-menu").addEventListener("click", function () {
+      $("#sidebar").classList.add("is-open");
+      $("#mobile-backdrop").hidden = false;
+    });
+    $("#mobile-backdrop").addEventListener("click", function () {
+      $("#sidebar").classList.remove("is-open");
+      $("#mobile-backdrop").hidden = true;
+    });
+    $("#add-transaction").addEventListener("click", function () { openTransactionDialog(); });
+    $("#add-goal").addEventListener("click", function () { openGoalDialog(); });
+    $("#add-debt").addEventListener("click", function () { openDebtDialog(); });
+    $("#add-recurring").addEventListener("click", function () { openRecurringDialog(); });
+    $("#add-budget").addEventListener("click", function () { openBudgetDialog(); });
+    $("#add-account").addEventListener("click", function () { openAccountDialog(); });
+    $("#import-statement").addEventListener("click", function () { openStatementImport(); });
+    $("#choose-statement-file").addEventListener("click", chooseStatementFile);
+    $("#confirm-statement-import").addEventListener("click", confirmStatementImport);
+    $("#transaction-type").addEventListener("change", renderTransactionOptions);
+    $("#goal-cadence").addEventListener("change", updateGoalCadenceFields);
+    $("#recurring-cadence").addEventListener("change", updateRecurringCadenceFields);
+    $("#recurring-no-end").addEventListener("change", updateRecurringEndField);
+    $("#debt-interest-enabled").addEventListener("change", updateDebtInterestField);
+    $("#transaction-form").addEventListener("submit", submitTransaction);
+    $("#goal-form").addEventListener("submit", submitGoal);
+    $("#debt-form").addEventListener("submit", submitDebt);
+    $("#recurring-form").addEventListener("submit", submitRecurring);
+    $("#budget-form").addEventListener("submit", submitBudget);
+    $("#account-form").addEventListener("submit", submitAccount);
+    $("#settings-form").addEventListener("submit", submitSettings);
+    $("#settings-year").addEventListener("change", yearSettingChanged);
+    $("#export-data").addEventListener("click", exportData);
+    $("#import-data").addEventListener("click", function () {
+      if (desktop) importData();
+      else $("#import-file").click();
+    });
+    $("#import-file").addEventListener("change", function (event) {
+      importData(event.target.files && event.target.files[0]);
+    });
+    $("#reset-data").addEventListener("click", resetData);
+    $("#refresh-backups").addEventListener("click", function () { loadBackups(false); });
+    $("#save-module-settings").addEventListener("click", saveModuleSettings);
+    $("#module-bank-accounts").addEventListener("change", function () {
+      $("#module-statement-import").disabled = !this.checked;
+      if (!this.checked) $("#module-statement-import").checked = false;
+    });
+    $("#open-data-folder").addEventListener("click", function () {
+      if (desktop) desktop.app.openDataFolder().then(function (message) {
+        if (message) showToast("Nie udało się otworzyć folderu: " + message);
+      });
+    });
+    $("#check-updates").addEventListener("click", checkForUpdates);
+    $("#install-update").addEventListener("click", function () { if (desktop) desktop.updater.install(); });
+    $("#print-month").addEventListener("click", function () { printReport("month"); });
+    $("#print-year").addEventListener("click", function () { printReport("year"); });
+    document.addEventListener("keydown", function (event) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveToFile();
+      }
+      if (event.key === "Escape") {
+        $("#sidebar").classList.remove("is-open");
+        $("#mobile-backdrop").hidden = true;
+      }
+    });
+    window.addEventListener("beforeunload", function (event) {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+    if (desktop) {
+      desktop.updater.onStatus(function (status) {
+        updateStatus = status;
+        if (data) renderUpdateStatus();
+      });
+    }
+  }
+
+  bindEvents();
+  initializeApp();
+}());
