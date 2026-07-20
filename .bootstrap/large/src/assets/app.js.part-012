@@ -1,0 +1,229 @@
+ent-day").value = number(debt.paymentDay) || 1;
+      $("#debt-dialog-title").textContent = "Edytuj dług";
+    } else {
+      $("#debt-apr").value = 0;
+      $("#debt-interest-enabled").checked = false;
+      $("#debt-minimum-payment").value = 0;
+      $("#debt-payment-day").value = 1;
+      $("#debt-dialog-title").textContent = "Dodaj dług";
+    }
+    updateDebtInterestField();
+    openDialog("debt-dialog");
+  }
+
+  function updateDebtInterestField() {
+    var enabled = modules().interest && $("#debt-interest-enabled").checked;
+    $("#debt-apr-field").hidden = !enabled;
+    $("#debt-apr").required = enabled;
+  }
+
+  function submitDebt(event) {
+    event.preventDefault();
+    var name = $("#debt-name").value.trim();
+    var total = number($("#debt-total").value);
+    var deadline = $("#debt-deadline").value;
+    var existing = data.debts.find(function (item) { return item.id === state.editingDebt; });
+    var interestEnabled = modules().interest ? $("#debt-interest-enabled").checked : !!(existing && existing.interestEnabled);
+    var apr = modules().interest ? (interestEnabled ? number($("#debt-apr").value) : 0) : number(existing && existing.apr);
+    var minimumPayment = number($("#debt-minimum-payment").value);
+    var paymentDay = Math.round(number($("#debt-payment-day").value));
+    var error = $("#debt-error");
+    error.textContent = "";
+    if (!name || !(total > 0) || !deadline) {
+      error.textContent = "Podaj nazwę, kwotę i termin spłaty.";
+      return;
+    }
+    if (apr < 0 || minimumPayment < 0 || paymentDay < 1 || paymentDay > 31) {
+      error.textContent = "Sprawdź oprocentowanie, minimalną ratę i dzień płatności.";
+      return;
+    }
+    var principalPaid = existing ? Math.max(0, number(existing.total) - Math.min(number(existing.total), debtRemaining(existing))) : 0;
+    if (total + .0001 < principalPaid) {
+      error.textContent = "Kwota długu nie może być niższa niż spłacony kapitał.";
+      return;
+    }
+    var debt = {
+      id: existing ? existing.id : uid("debt"),
+      name: name,
+      total: total,
+      deadline: deadline,
+      apr: apr,
+      interestEnabled: interestEnabled,
+      minimumPayment: minimumPayment,
+      paymentDay: paymentDay,
+      createdAt: existing ? existing.createdAt : new Date().toISOString()
+    };
+    if (existing) data.debts = data.debts.map(function (item) { return item.id === existing.id ? debt : item; });
+    else data.debts.push(debt);
+    state.editingDebt = null;
+    closeDialog("debt-dialog");
+    markDirty(existing ? "Zmieniono dług." : "Dodano dług.");
+    renderAll();
+  }
+
+  function deleteDebt(id) {
+    if (data.transactions.some(function (transaction) { return transaction.type === "debt" && transaction.targetId === id; })) {
+      showToast("Ten dług ma powiązane spłaty. Najpierw usuń lub edytuj te operacje.");
+      return;
+    }
+    if (!window.confirm("Usunąć ten dług?")) return;
+    data.debts = data.debts.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto dług.");
+    renderAll();
+  }
+
+  function fillPlanningCategoryOptions() {
+    var recurringCurrent = $("#recurring-category").value;
+    var budgetCurrent = $("#budget-category").value;
+    var options = data.settings.categories.map(function (category) {
+      return "<option value=\"" + escapeHTML(category) + "\">" + escapeHTML(category) + "</option>";
+    }).join("");
+    $("#recurring-category").innerHTML = options;
+    $("#budget-category").innerHTML = options;
+    if (data.settings.categories.indexOf(recurringCurrent) >= 0) $("#recurring-category").value = recurringCurrent;
+    if (data.settings.categories.indexOf(budgetCurrent) >= 0) $("#budget-category").value = budgetCurrent;
+  }
+
+  function updateRecurringCadenceFields() {
+    var weekly = $("#recurring-cadence").value === "weekly";
+    $("#recurring-day").max = weekly ? "7" : "31";
+    $("#recurring-day-label").textContent = weekly ? "Dzień tygodnia (1=pon., 7=niedz.)" : "Dzień miesiąca";
+    if (weekly && number($("#recurring-day").value) > 7) $("#recurring-day").value = 1;
+  }
+
+  function updateRecurringEndField() {
+    var noEnd = $("#recurring-no-end").checked;
+    $("#recurring-end").disabled = noEnd;
+    $("#recurring-end").required = !noEnd;
+    $("#recurring-end-field").classList.toggle("is-disabled", noEnd);
+    if (noEnd) $("#recurring-end").value = "";
+  }
+
+  function openRecurringDialog(id) {
+    state.editingRecurring = id || null;
+    $("#recurring-form").reset();
+    $("#recurring-error").textContent = "";
+    fillPlanningCategoryOptions();
+    fillAccountOptions();
+    var recurring = id ? data.recurring.find(function (item) { return item.id === id; }) : null;
+    if (recurring) {
+      $("#recurring-name").value = recurring.name;
+      $("#recurring-type").value = recurring.type;
+      $("#recurring-amount").value = recurring.amount;
+      $("#recurring-category").value = recurring.category;
+      $("#recurring-account").value = recurring.accountId || mainCashAccount().id;
+      $("#recurring-cadence").value = recurring.cadence;
+      $("#recurring-day").value = recurring.day;
+      $("#recurring-start").value = recurring.startDate;
+      $("#recurring-end").value = recurring.endDate || "";
+      $("#recurring-no-end").checked = !recurring.endDate;
+      $("#recurring-active").checked = recurring.active;
+      $("#recurring-dialog-title").textContent = "Edytuj cykliczny wpis";
+    } else {
+      $("#recurring-cadence").value = "monthly";
+      $("#recurring-day").value = 1;
+      $("#recurring-start").value = isoDate(startOfToday());
+      $("#recurring-no-end").checked = true;
+      $("#recurring-active").checked = true;
+      $("#recurring-dialog-title").textContent = "Dodaj cykliczny wpis";
+    }
+    updateRecurringCadenceFields();
+    updateRecurringEndField();
+    openDialog("recurring-dialog");
+  }
+
+  function submitRecurring(event) {
+    event.preventDefault();
+    var error = $("#recurring-error");
+    error.textContent = "";
+    var name = $("#recurring-name").value.trim();
+    var amount = number($("#recurring-amount").value);
+    var cadence = $("#recurring-cadence").value;
+    var day = Math.round(number($("#recurring-day").value));
+    var startDate = $("#recurring-start").value;
+    var endDate = $("#recurring-no-end").checked ? "" : $("#recurring-end").value;
+    if (!name || !(amount > 0) || !startDate || (!$("#recurring-no-end").checked && !endDate)) {
+      error.textContent = "Podaj nazwę, kwotę przewidywaną oraz okres obowiązywania.";
+      return;
+    }
+    if (day < 1 || day > (cadence === "weekly" ? 7 : 31)) {
+      error.textContent = "Sprawdź dzień harmonogramu.";
+      return;
+    }
+    if (endDate && dateFromISO(endDate).getTime() < dateFromISO(startDate).getTime()) {
+      error.textContent = "Data końcowa nie może być wcześniejsza niż początek.";
+      return;
+    }
+    var existing = data.recurring.find(function (item) { return item.id === state.editingRecurring; });
+    var recurring = {
+      id: existing ? existing.id : uid("rec"),
+      name: name,
+      type: $("#recurring-type").value === "income" ? "income" : "expense",
+      amount: amount,
+      category: $("#recurring-category").value,
+      accountId: $("#recurring-account").value || mainCashAccount().id,
+      cadence: cadence,
+      day: day,
+      startDate: startDate,
+      endDate: endDate,
+      active: $("#recurring-active").checked,
+      createdAt: existing ? existing.createdAt : new Date().toISOString()
+    };
+    if (existing) data.recurring = data.recurring.map(function (item) { return item.id === existing.id ? recurring : item; });
+    else data.recurring.push(recurring);
+    state.editingRecurring = null;
+    closeDialog("recurring-dialog");
+    markDirty(existing ? "Zmieniono cykliczny wpis." : "Dodano cykliczny wpis.");
+    renderAll();
+  }
+
+  function deleteRecurring(id) {
+    if (!window.confirm("Usunąć ten harmonogram? Zaksięgowane wcześniej operacje pozostaną bez zmian.")) return;
+    data.recurring = data.recurring.filter(function (item) { return item.id !== id; });
+    markDirty("Usunięto cykliczny wpis.");
+    renderAll();
+  }
+
+  function openBudgetDialog(id) {
+    state.editingBudget = id || null;
+    $("#budget-form").reset();
+    $("#budget-error").textContent = "";
+    fillPlanningCategoryOptions();
+    var budget = id ? data.budgets.find(function (item) { return item.id === id; }) : null;
+    if (budget) {
+      $("#budget-category").value = budget.category;
+      $("#budget-limit").value = budget.limit;
+      $("#budget-dialog-title").textContent = "Edytuj limit kategorii";
+    } else {
+      $("#budget-dialog-title").textContent = "Dodaj limit kategorii";
+    }
+    openDialog("budget-dialog");
+  }
+
+  function submitBudget(event) {
+    event.preventDefault();
+    var category = $("#budget-category").value;
+    var limit = number($("#budget-limit").value);
+    var error = $("#budget-error");
+    error.textContent = "";
+    if (!category || !(limit > 0)) {
+      error.textContent = "Wybierz kategorię i podaj limit większy od zera.";
+      return;
+    }
+    var duplicate = data.budgets.find(function (item) { return item.category === category && item.id !== state.editingBudget; });
+    if (duplicate) {
+      error.textContent = "Ta kategoria ma już kopertę.";
+      return;
+    }
+    var existing = data.budgets.find(function (item) { return item.id === state.editingBudget; });
+    var budget = { id: existing ? existing.id : uid("budget"), category: category, limit: limit, createdAt: existing ? existing.createdAt : new Date().toISOString() };
+    if (existing) data.budgets = data.budgets.map(function (item) { return item.id === existing.id ? budget : item; });
+    else data.budgets.push(budget);
+    state.editingBudget = null;
+    closeDialog("budget-dialog");
+    markDirty(existing ? "Zmieniono kopertę." : "Dodano kopertę.");
+    renderAll();
+  }
+
+  function deleteBudget(id) {
+    if (!window.confirm("Usunąć tę kopertę? Operacje w kategorii pozostaną bez zmian.")) ret
