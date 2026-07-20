@@ -1,37 +1,69 @@
-# Portfel Tauri
+# Portfel — wersja Tauri
 
-Nowe repozytorium aplikacji **Portfel** rozwijanej w Tauri.
+Prywatna, lokalna aplikacja finansowa dla Windows 10/11. Interfejs zachowuje
+układ, animacje oraz jasny i ciemny motyw poprzedniej wersji, a dane pozostają
+wyłącznie na komputerze użytkownika.
 
-## Aktualny stan
+## Najważniejsze funkcje
 
-Wersja robocza: **0.5.0-alpha.1**.
+- lokalne profile użytkowników z osobnymi danymi finansowymi,
+- profil bez hasła lub chroniony hasłem przechowywanym jako skrót Argon2,
+- profil domyślny, animowany ekran wyboru profilu i przycisk „Wyloguj”,
+- zmiana nazwy, koloru, zdjęcia i hasła aktywnego profilu,
+- operacje cykliczne z datą rozpoczęcia, datą końcową albo trybem bezterminowym,
+- kwota przewidywana oraz zatwierdzana kwota faktyczna dla każdej realizacji,
+- status realizacji: Oczekuje, Zatwierdzona, Pominięta albo Po terminie,
+- prognozy liczone z kwot przewidywanych, podsumowania z zatwierdzonych operacji,
+- widoki miesięczne i roczne, cele, długi, budżety kategorii i alerty,
+- opcjonalne konta gotówkowe, bankowe i oszczędnościowe,
+- transfery pomiędzy kontami bez zaliczania ich do wydatków,
+- lokalny import wyciągów CSV z podglądem i wykrywaniem duplikatów,
+- lokalna baza SQLite oraz 30 automatycznych kopii dla każdego profilu,
+- eksport i import danych JSON.
 
-Gotowa lokalna paczka źródłowa została przygotowana poza repozytorium jako kopia awaryjna. Zawiera pełny kod Tauri, patch zmian, instrukcję budowania, raport kontroli i sumy SHA-256.
+Program nie używa `localStorage`, nie uruchamia serwera i nie wymaga rejestracji
+internetowej. Hasło blokuje otwarcie profilu w aplikacji; baza finansowa nie jest
+szyfrowana na dysku.
 
-## Zakres wersji 0.5.0-alpha.1
+## Dane programu i migracja
 
-- lokalne profile użytkowników,
-- opcjonalne hasło profilu,
-- osobne bazy SQLite dla profili,
-- animowany ekran wyboru profilu,
-- harmonogramy cykliczne z datą końcową albo trybem bezterminowym,
-- kwota przewidywana i faktyczna przy potwierdzaniu wpływu lub wydatku,
-- zachowanie wcześniejszej bazy jako konta „Moje konto”.
+Na Windows baza jest tworzona standardowo tutaj:
 
-## Budowanie
+```text
+%APPDATA%\Portfel\data\portfel.sqlite
+```
 
-Po wgraniu pełnych źródeł wymagane będą:
+Przy pierwszym uruchomieniu wersji 0.5 istniejące dane są automatycznie
+przypisywane do lokalnego profilu „Mój profil”. Każdy kolejny profil ma osobny
+rekord danych i osobny katalog kopii zapasowych. Odinstalowanie aplikacji nie
+powinno usuwać bazy, ale przed większą aktualizacją warto użyć opcji „Eksportuj
+kopię”.
+
+## Uruchomienie gotowej wersji
+
+Najwygodniej uruchomić instalator `Portfel_*_x64-setup.exe`. Wersja przenośna to
+`Aplikacja\Portfel.exe`. Aplikacja korzysta z Microsoft Edge WebView2.
+
+## Praca z kodem
+
+Wymagane są Node.js 20+, Rust stable oraz na Windows narzędzia C++ z Visual
+Studio Build Tools.
 
 ```text
 npm ci
-npm run audit
 npm test
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 
-## Uwaga
+Można też uruchomić `build-windows.bat`.
 
-Import pełnych źródeł do GitHuba jest kontynuowany ostrożnie, ponieważ poprzednia metoda dzielenia dużych plików była zbyt wolna. Główna kopia awaryjna ZIP pozostaje dostępna lokalnie w rozmowie jako niezależna paczka projektu.
+## Struktura projektu
+
+- `src/` — interfejs HTML/CSS/JS oraz most poleceń Tauri,
+- `src-tauri/` — okno natywne, profile, Argon2, SQLite, kopie i import CSV,
+- `tests/` — automatyczne testy interfejsu,
+- `.github/workflows/windows-build.yml` — testy i budowa Windows.
+
+Katalogi `node_modules/` i `src-tauri/target/` są generowane i nie należą do
+kodu źródłowego.
