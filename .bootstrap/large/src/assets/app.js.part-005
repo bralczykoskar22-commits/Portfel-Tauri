@@ -1,0 +1,191 @@
+</article>");
+    node.innerHTML = cards.join("");
+    node.hidden = false;
+  }
+
+  function renderDashboard() {
+    $("#hero-year").textContent = currentYear();
+    var ending = balancesAtYearEnd();
+    var goalsSaved = data.goals.reduce(function (sum, goal) { return sum + goalSaved(goal); }, 0);
+    var goalsTarget = data.goals.reduce(function (sum, goal) { return sum + number(goal.target); }, 0);
+    var debtsPaid = data.debts.reduce(function (sum, debt) { return sum + debtPaid(debt); }, 0);
+    var debtsRemaining = data.debts.reduce(function (sum, debt) { return sum + debtRemaining(debt); }, 0);
+    $("#metric-available").textContent = money(ending.available);
+    $("#metric-available-label").textContent = modules().bankAccounts ? "Środki dostępne" : "Gotówka dostępna";
+    $("#metric-available").classList.toggle("negative", ending.available < 0);
+    $("#metric-reserve").textContent = money(ending.reserve);
+    $("#metric-reserve").classList.toggle("negative", ending.reserve < 0);
+    $("#metric-goals").textContent = money(goalsSaved);
+    $("#metric-goals-note").textContent = data.goals.length ? "Z " + money(goalsTarget) + " celu" : "Brak celów";
+    $("#metric-debts").textContent = money(debtsRemaining);
+    $("#metric-debts-note").textContent = data.debts.length ? "Spłacono " + money(debtsPaid) : "Brak długów";
+    renderAlerts();
+    renderSpendingLimits();
+    renderAnnualChart();
+    renderRecentTransactions();
+  }
+
+  function compactMoney(value) {
+    var absolute = Math.abs(value);
+    if (absolute >= 1000000) return (value / 1000000).toLocaleString("pl-PL", { maximumFractionDigits: 1 }) + " mln";
+    if (absolute >= 1000) return (value / 1000).toLocaleString("pl-PL", { maximumFractionDigits: 1 }) + " tys.";
+    return Math.round(value).toLocaleString("pl-PL");
+  }
+
+  function renderAnnualChart() {
+    var values = MONTHS.map(function (_, month) {
+      var stats = monthStats(month);
+      return { income: stats.income, outflow: stats.outflow };
+    });
+    var maxValue = Math.max.apply(null, values.reduce(function (list, item) {
+      return list.concat([item.income, item.outflow]);
+    }, [0]));
+    var node = $("#annual-chart");
+    if (maxValue <= 0) {
+      node.innerHTML = "<div class=\"chart-empty\">Wykres pojawi się po dodaniu pierwszej operacji.</div>";
+      return;
+    }
+    var width = 820;
+    var height = 285;
+    var left = 52;
+    var right = 12;
+    var top = 16;
+    var bottom = 39;
+    var plotWidth = width - left - right;
+    var plotHeight = height - top - bottom;
+    var groupWidth = plotWidth / 12;
+    var barWidth = Math.max(7, groupWidth * .28);
+    var svg = [];
+    svg.push("<svg viewBox=\"0 0 " + width + " " + height + "\" role=\"img\" aria-label=\"Wpływy i wydatki w każdym miesiącu\">");
+    for (var grid = 0; grid <= 4; grid += 1) {
+      var ratio = grid / 4;
+      var y = top + plotHeight - ratio * plotHeight;
+      svg.push("<line x1=\"" + left + "\" y1=\"" + y + "\" x2=\"" + (width - right) + "\" y2=\"" + y + "\" stroke=\"var(--border)\" stroke-width=\"1\"></line>");
+      svg.push("<text x=\"" + (left - 7) + "\" y=\"" + (y + 4) + "\" text-anchor=\"end\" fill=\"var(--muted)\" font-size=\"10\">" + escapeHTML(compactMoney(maxValue * ratio)) + "</text>");
+    }
+    values.forEach(function (item, index) {
+      var center = left + groupWidth * index + groupWidth / 2;
+      var incomeHeight = item.income / maxValue * plotHeight;
+      var outflowHeight = item.outflow / maxValue * plotHeight;
+      svg.push("<rect class=\"chart-bar\" style=\"animation-delay:" + (index * .035) + "s\" x=\"" + (center - barWidth - 2) + "\" y=\"" + (top + plotHeight - incomeHeight) + "\" width=\"" + barWidth + "\" height=\"" + incomeHeight + "\" rx=\"4\" fill=\"var(--primary)\"><title>" + MONTHS[index] + " wpływy: " + escapeHTML(money(item.income)) + "</title></rect>");
+      svg.push("<rect class=\"chart-bar\" style=\"animation-delay:" + (index * .035 + .08) + "s\" x=\"" + (center + 2) + "\" y=\"" + (top + plotHeight - outflowHeight) + "\" width=\"" + barWidth + "\" height=\"" + outflowHeight + "\" rx=\"4\" fill=\"var(--purple)\"><title>" + MONTHS[index] + " wydatki: " + escapeHTML(money(item.outflow)) + "</title></rect>");
+      svg.push("<text x=\"" + center + "\" y=\"" + (height - 13) + "\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"10\">" + MONTHS_SHORT[index] + "</text>");
+    });
+    svg.push("</svg>");
+    node.innerHTML = svg.join("");
+  }
+
+  function renderRecentTransactions() {
+    var recent = sortedTransactions(yearTransactions()).reverse().slice(0, 6);
+    var node = $("#recent-transactions");
+    if (!recent.length) {
+      node.innerHTML = "<div class=\"empty-state\">Brak operacji w tym roku.</div>";
+      return;
+    }
+    node.innerHTML = recent.map(function (transaction, index) {
+      var delta = impact(transaction).available;
+      var out = delta < 0;
+      var transfer = transaction.type === "transfer";
+      return "<div class=\"recent-item\" style=\"animation-delay:" + (index * .045) + "s\">" +
+        "<div class=\"recent-icon " + (out ? "is-out" : "") + "\">" + (transfer ? "↔" : out ? "↓" : "↑") + "</div>" +
+        "<div class=\"recent-main\"><strong>" + escapeHTML(transaction.description || TYPE_LABELS[transaction.type]) + "</strong><span>" + escapeHTML(targetName(transaction)) + " • " + escapeHTML(formattedDate(transaction.date)) + "</span></div>" +
+        "<div class=\"recent-amount " + (out ? "is-out" : "") + "\"><strong>" + (transfer ? "" : out ? "−" : "+") + escapeHTML(money(transaction.amount)) + "</strong><small>" + escapeHTML(TYPE_LABELS[transaction.type]) + "</small></div></div>";
+    }).join("");
+  }
+
+  function categorySpent(category, month) {
+    return monthTransactions(month).reduce(function (sum, transaction) {
+      return transaction.type === "expense" && transaction.category === category ? sum + number(transaction.amount) : sum;
+    }, 0);
+  }
+
+  function postedOccurrence(recurringId, scheduledDate) {
+    return data.transactions.find(function (transaction) {
+      return transaction.recurringId === recurringId && (transaction.scheduledDate === scheduledDate || (!transaction.scheduledDate && transaction.date === scheduledDate));
+    });
+  }
+
+  function targetMonthNet(type, targetId, month) {
+    return monthTransactions(month).reduce(function (sum, transaction) {
+      if (transaction.targetId !== targetId) return sum;
+      if (type === "goal" && transaction.type === "goal") return sum + number(transaction.amount);
+      if (type === "goal" && transaction.type === "goal_withdraw") return sum - number(transaction.amount);
+      if (type === "debt" && transaction.type === "debt") return sum + number(transaction.amount);
+      return sum;
+    }, 0);
+  }
+
+  function plannedItemsForMonth(month) {
+    var start = startOfMonth(currentYear(), month);
+    var end = endOfMonth(currentYear(), month);
+    var items = [];
+    (modules().recurring ? data.recurring : []).filter(function (recurring) { return recurring.active; }).forEach(function (recurring) {
+      recurringOccurrences(recurring, start, end).forEach(function (date) {
+        var key = isoDate(date);
+        var posted = postedOccurrence(recurring.id, key);
+        var expected = posted && number(posted.expectedAmount) > 0 ? number(posted.expectedAmount) : number(recurring.amount);
+        items.push({
+          kind: "recurring",
+          direction: recurring.type,
+          title: recurring.name,
+          subtitle: (recurring.type === "income" ? "Cykliczny wpływ" : "Cykliczny wydatek") + (posted ? " • kwota potwierdzona" : " • oczekuje na potwierdzenie"),
+          date: date,
+          planned: expected,
+          actual: posted ? number(posted.amount) : 0,
+          remaining: posted ? 0 : expected,
+          recurringId: recurring.id,
+          scheduledDate: key,
+          complete: !!posted
+        });
+      });
+    });
+    data.goals.forEach(function (goal) {
+      var plan = goalPlan(goal);
+      if (plan.remaining <= 0) return;
+      var dates = goalScheduleDates(goal, start, end);
+      if (!dates.length) return;
+      var planned = Math.min(plan.recommended * dates.length, plan.remaining);
+      var actual = Math.max(0, targetMonthNet("goal", goal.id, month));
+      items.push({
+        kind: "goal",
+        title: goal.name,
+        subtitle: "Wpłata na cel • " + CADENCE_LABELS[goal.cadence],
+        date: dates[dates.length - 1],
+        planned: planned,
+        actual: actual,
+        remaining: Math.max(planned - actual, 0),
+        targetId: goal.id,
+        complete: actual + .0001 >= planned
+      });
+    });
+    data.debts.forEach(function (debt) {
+      var plan = debtPlan(debt);
+      if (plan.remaining <= 0) return;
+      var dates = debtScheduleDates(debt, start, end);
+      if (!dates.length) return;
+      var planned = Math.min(plan.recommended * dates.length, plan.remaining + plan.estimatedInterest);
+      var actual = targetMonthNet("debt", debt.id, month);
+      items.push({
+        kind: "debt",
+        title: debt.name,
+        subtitle: "Planowana rata • " + (plan.apr > 0 ? "oprocentowanie " + number(plan.apr).toLocaleString("pl-PL") + "%" : "bez odsetek"),
+        date: dates[dates.length - 1],
+        planned: planned,
+        actual: actual,
+        remaining: Math.max(planned - actual, 0),
+        targetId: debt.id,
+        complete: actual + .0001 >= planned
+      });
+    });
+    return items.sort(function (a, b) { return a.date.getTime() - b.date.getTime(); });
+  }
+
+  function renderMonthPlan() {
+    var items = plannedItemsForMonth(state.month);
+    var complete = items.filter(function (item) { return item.complete; }).length;
+    $("#month-plan-status").textContent = items.length ? complete + " z " + items.length + " wykonane" : "0 zadań";
+    var node = $("#month-plan");
+    if (!items.length) {
+      node.innerHTML = "<div class=\"empty-plan\">Brak zaplanowanych wpłat, rat i cyklicznych operacji w tym miesiącu.</div>";
+      return;
+  
