@@ -1,0 +1,234 @@
+es : {});
+    if (!modules.bankAccounts) modules.statementImport = false;
+    var paydayRaw = settings.payday && typeof settings.payday === "object" ? settings.payday : {};
+    var payday = {
+      day: Math.min(31, Math.max(1, Math.round(number(paydayRaw.day) || 10))),
+      nextDate: String(paydayRaw.nextDate || "")
+    };
+    var today = isoDate(new Date());
+    var goals = Array.isArray(raw.goals) ? raw.goals.filter(Boolean).map(function (item) {
+      var createdDate = String(item.createdAt || "").slice(0, 10);
+      return {
+        id: String(item.id || uid("goal")),
+        name: String(item.name || "Cel"),
+        target: Math.max(0, number(item.target)),
+        deadline: String(item.deadline || ""),
+        startDate: String(item.startDate || createdDate || today),
+        cadence: item.cadence === "weekly" || item.cadence === "payday" ? item.cadence : "monthly",
+        paymentDay: Math.min(31, Math.max(1, Math.round(number(item.paymentDay) || 1))),
+        paydayRecurringId: String(item.paydayRecurringId || ""),
+        maxContribution: Math.max(0, number(item.maxContribution)),
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    }) : [];
+    var debts = Array.isArray(raw.debts) ? raw.debts.filter(Boolean).map(function (item) {
+      return {
+        id: String(item.id || uid("debt")),
+        name: String(item.name || "Dług"),
+        total: Math.max(0, number(item.total)),
+        deadline: String(item.deadline || ""),
+        apr: Math.max(0, number(item.apr)),
+        interestEnabled: item.interestEnabled !== false && number(item.apr) > 0,
+        minimumPayment: Math.max(0, number(item.minimumPayment)),
+        paymentDay: Math.min(31, Math.max(1, Math.round(number(item.paymentDay) || 1))),
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    }) : [];
+    var rawAccounts = Array.isArray(raw.accounts) ? raw.accounts.filter(Boolean) : [];
+    if (!rawAccounts.length) {
+      rawAccounts = [{
+        id: "cash-main",
+        name: "Gotówka",
+        type: "cash",
+        currency: "PLN",
+        openingBalances: (function () { var values = {}; values[String(year)] = number(balances[String(year)].available); return values; }()),
+        active: true,
+        includeInSpendingLimit: true,
+        createdAt: new Date().toISOString()
+      }];
+    }
+    var accounts = rawAccounts.map(function (item, index) {
+      var type = item.type === "bank" || item.type === "savings" ? item.type : "cash";
+      var openings = item.openingBalances && typeof item.openingBalances === "object" ? item.openingBalances : {};
+      if (openings[String(year)] == null) openings[String(year)] = index === 0 ? number(balances[String(year)].available) : 0;
+      Object.keys(openings).forEach(function (key) { openings[key] = number(openings[key]); });
+      return {
+        id: String(item.id || (index === 0 ? "cash-main" : uid("account"))),
+        name: String(item.name || (type === "cash" ? "Gotówka" : "Konto bankowe")),
+        type: type,
+        currency: "PLN",
+        openingBalances: openings,
+        active: item.active !== false,
+        includeInSpendingLimit: item.includeInSpendingLimit !== false,
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    });
+    var defaultAccountId = (accounts.find(function (item) { return item.type === "cash"; }) || accounts[0]).id;
+    var recurring = Array.isArray(raw.recurring) ? raw.recurring.filter(Boolean).map(function (item) {
+      return {
+        id: String(item.id || uid("rec")),
+        name: String(item.name || "Cykliczny wpis"),
+        type: item.type === "income" ? "income" : "expense",
+        amount: Math.max(0, number(item.amount)),
+        category: String(item.category || base.settings.categories[0]),
+        accountId: String(item.accountId || defaultAccountId),
+        cadence: item.cadence === "weekly" ? "weekly" : "monthly",
+        day: Math.min(item.cadence === "weekly" ? 7 : 31, Math.max(1, Math.round(number(item.day) || 1))),
+        startDate: String(item.startDate || today),
+        endDate: String(item.endDate || ""),
+        active: item.active !== false,
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    }) : [];
+    var budgets = Array.isArray(raw.budgets) ? raw.budgets.filter(Boolean).map(function (item) {
+      return {
+        id: String(item.id || uid("budget")),
+        category: String(item.category || "Inne"),
+        limit: Math.max(0, number(item.limit)),
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    }) : [];
+    var transactions = Array.isArray(raw.transactions) ? raw.transactions.filter(Boolean).map(function (item) {
+      return {
+        id: String(item.id || uid("tx")),
+        date: String(item.date || today),
+        type: String(item.type || "expense"),
+        category: String(item.category || ""),
+        targetId: String(item.targetId || ""),
+        recurringId: String(item.recurringId || ""),
+        scheduledDate: String(item.scheduledDate || ""),
+        expectedAmount: Math.max(0, number(item.expectedAmount)),
+        description: String(item.description || ""),
+        amount: Math.max(0, number(item.amount)),
+        note: String(item.note || ""),
+        accountId: String(item.accountId || defaultAccountId),
+        toAccountId: String(item.toAccountId || ""),
+        importFingerprint: String(item.importFingerprint || ""),
+        source: String(item.source || "manual"),
+        createdAt: String(item.createdAt || new Date().toISOString())
+      };
+    }) : [];
+    return {
+      version: 5,
+      meta: raw.meta && typeof raw.meta === "object" ? raw.meta : { savedAt: null },
+      settings: {
+        currentYear: year,
+        theme: settings.theme === "dark" ? "dark" : "light",
+        currency: "PLN",
+        balances: balances,
+        categories: categories.length ? categories : base.settings.categories,
+        modules: modules,
+        payday: payday
+      },
+      accounts: accounts,
+      goals: goals,
+      debts: debts,
+      recurring: recurring,
+      budgets: budgets,
+      transactions: transactions
+    };
+  }
+
+  function currentYear() {
+    return Number(data.settings.currentYear);
+  }
+
+  function yearBalance() {
+    var key = String(currentYear());
+    if (!data.settings.balances[key]) {
+      data.settings.balances[key] = { available: 0, reserve: 0 };
+    }
+    return data.settings.balances[key];
+  }
+
+  function modules() {
+    return data.settings.modules || DEFAULT_MODULES;
+  }
+
+  function activeAccounts(includeHidden) {
+    return data.accounts.filter(function (account) {
+      if (!includeHidden && account.active === false) return false;
+      return modules().bankAccounts || account.type === "cash";
+    });
+  }
+
+  function accountById(id) {
+    return data.accounts.find(function (account) { return account.id === id; }) || null;
+  }
+
+  function mainCashAccount() {
+    return data.accounts.find(function (account) { return account.type === "cash"; }) || data.accounts[0];
+  }
+
+  function accountName(id) {
+    var account = accountById(id);
+    return account ? account.name : "Nieznane konto";
+  }
+
+  function accountOpening(account) {
+    return account && account.openingBalances ? number(account.openingBalances[String(currentYear())]) : 0;
+  }
+
+  function totalOpeningAvailable() {
+    return data.accounts.reduce(function (sum, account) { return sum + accountOpening(account); }, 0);
+  }
+
+  function accountImpact(transaction, accountId) {
+    var amount = number(transaction.amount);
+    if (transaction.type === "transfer") {
+      if (transaction.accountId === accountId) return -amount;
+      if (transaction.toAccountId === accountId) return amount;
+      return 0;
+    }
+    if (transaction.accountId !== accountId) return 0;
+    if (transaction.type === "income" || transaction.type === "goal_withdraw" || transaction.type === "reserve_out") return amount;
+    if (transaction.type === "expense" || transaction.type === "goal" || transaction.type === "debt" || transaction.type === "reserve_in") return -amount;
+    return 0;
+  }
+
+  function accountBalance(account, throughDate) {
+    var balance = accountOpening(account);
+    yearTransactions().forEach(function (transaction) {
+      if (!throughDate || String(transaction.date || "") <= throughDate) {
+        balance += accountImpact(transaction, account.id);
+      }
+    });
+    return balance;
+  }
+
+  function impact(transaction) {
+    var amount = number(transaction.amount);
+    if (transaction.type === "income") return { available: amount, reserve: 0 };
+    if (transaction.type === "expense" || transaction.type === "goal" || transaction.type === "debt") {
+      return { available: -amount, reserve: 0 };
+    }
+    if (transaction.type === "goal_withdraw") return { available: amount, reserve: 0 };
+    if (transaction.type === "reserve_in") return { available: -amount, reserve: amount };
+    if (transaction.type === "reserve_out") return { available: amount, reserve: -amount };
+    if (transaction.type === "transfer") return { available: 0, reserve: 0 };
+    return { available: 0, reserve: 0 };
+  }
+
+  function yearTransactions() {
+    var prefix = String(currentYear()) + "-";
+    return data.transactions.filter(function (transaction) {
+      return String(transaction.date || "").indexOf(prefix) === 0;
+    });
+  }
+
+  function sortedTransactions(list) {
+    return list.slice().sort(function (a, b) {
+      var byDate = String(a.date || "").localeCompare(String(b.date || ""));
+      if (byDate) return byDate;
+      return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id));
+    });
+  }
+
+  function monthTransactions(month) {
+    var prefix = currentYear() + "-" + String(month + 1).padStart(2, "0") + "-";
+    return sortedTransactions(data.transactions.filter(function (transaction) {
+      return String(transaction.date || "").indexOf(prefix) === 0;
+    }));
+  }
+
+  function balancesBeforeMon
