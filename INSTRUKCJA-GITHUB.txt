@@ -1,0 +1,14 @@
+PORTFEL 0.6.0-alpha.1 — BUDOWANIE PRZEZ GITHUB
+
+1. Rozpakuj tę paczkę.
+2. W repozytorium Portfel-Tauri wybierz Add file -> Upload files.
+3. Prześlij całą zawartość folderu, również ukryty folder .github.
+4. Zatwierdź zmiany bezpośrednio do gałęzi main.
+5. Otwórz zakładkę Actions i wybierz Portfel Tauri — Windows.
+6. Poczekaj na zielony status.
+7. Otwórz zakończone uruchomienie i pobierz artefakt:
+   Portfel-Tauri-Windows-x64-v0.6.0-alpha.1
+8. W pobranym ZIP-ie uruchom instalator z folderu Instalator.
+
+Przy przesyłaniu przez przeglądarkę zastąp istniejące pliki nowymi. Nie przesyłaj
+folderów node_modules ani src-tauri/target — nie ma ich w tej paczce.
