@@ -1,0 +1,248 @@
+ledDate: "",
+        description: row.description, amount: Math.abs(number(row.amount)), note: "Import z wyciągu: " + preview.result.fileName,
+        accountId: preview.accountId, toAccountId: type === "transfer" ? cash.id : "", importFingerprint: row.fingerprint,
+        source: "statement", createdAt: new Date().toISOString()
+      });
+      existing.add(row.fingerprint);
+      added += 1;
+    });
+    if (!added) {
+      showToast("Nie zaznaczono nowych operacji.");
+      return;
+    }
+    closeDialog("statement-dialog");
+    state.statementPreview = null;
+    markDirty("Dodano " + added + (added === 1 ? " operację z wyciągu." : " operacji z wyciągu."));
+    renderAll();
+  }
+
+  function openTargetHistory(kind, id) {
+    var target = kind === "goal" ? data.goals.find(function (item) { return item.id === id; }) : data.debts.find(function (item) { return item.id === id; });
+    if (!target) return;
+    var items = sortedTransactions(data.transactions.filter(function (transaction) {
+      if (transaction.targetId !== id) return false;
+      return kind === "goal" ? transaction.type === "goal" || transaction.type === "goal_withdraw" : transaction.type === "debt";
+    })).reverse();
+    $("#history-dialog-title").textContent = target.name;
+    $("#history-list").innerHTML = items.length ? items.map(function (transaction) {
+      var withdrawal = transaction.type === "goal_withdraw";
+      return "<div class=\"history-item\"><div class=\"recent-icon " + (withdrawal || transaction.type === "debt" ? "is-out" : "") + "\">" + (withdrawal ? "↩" : "↓") + "</div><div><strong>" + escapeHTML(TYPE_LABELS[transaction.type]) + "</strong><span>" + escapeHTML(formattedDate(transaction.date) + (transaction.description ? " • " + transaction.description : "")) + "</span></div><strong class=\"" + (withdrawal ? "is-positive" : "") + "\">" + (withdrawal ? "+" : "−") + escapeHTML(money(transaction.amount)) + "</strong></div>";
+    }).join("") : "<div class=\"empty-plan\">Brak powiązanych operacji.</div>";
+    openDialog("history-dialog");
+  }
+
+  function submitSettings(event) {
+    event.preventDefault();
+    var year = Math.round(number($("#settings-year").value));
+    var available = number($("#settings-available").value);
+    var reserve = number($("#settings-reserve").value);
+    var categories = uniqueLines($("#settings-categories").value);
+    var error = $("#settings-error");
+    error.textContent = "";
+    if (year < 2020 || year > 2100 || available < 0 || reserve < 0) {
+      error.textContent = "Sprawdź rok i salda początkowe.";
+      return;
+    }
+    if (!categories.length) {
+      error.textContent = "Zostaw przynajmniej jedną kategorię.";
+      return;
+    }
+    data.settings.currentYear = year;
+    data.settings.balances[String(year)] = { available: available, reserve: reserve };
+    var cash = mainCashAccount();
+    if (cash) cash.openingBalances[String(year)] = available;
+    data.accounts.forEach(function (account) {
+      if (account.openingBalances[String(year)] == null) account.openingBalances[String(year)] = 0;
+    });
+    data.settings.categories = categories;
+    state.month = year === new Date().getFullYear() ? new Date().getMonth() : 0;
+    state.planMonth = state.month;
+    markDirty("Zastosowano ustawienia.");
+    renderAll();
+    setPage("settings");
+  }
+
+  function yearSettingChanged() {
+    var year = Math.round(number($("#settings-year").value));
+    var balance = data.settings.balances[String(year)] || { available: 0, reserve: 0 };
+    var cash = mainCashAccount();
+    $("#settings-available").value = cash && cash.openingBalances[String(year)] != null ? number(cash.openingBalances[String(year)]) : number(balance.available);
+    $("#settings-reserve").value = number(balance.reserve);
+  }
+
+  function saveModuleSettings() {
+    var day = Math.round(number($("#settings-payday-day").value));
+    var nextDate = $("#settings-next-payday").value;
+    if (day < 1 || day > 31) {
+      showToast("Dzień wypłaty musi mieścić się od 1 do 31.");
+      return;
+    }
+    var bankAccounts = $("#module-bank-accounts").checked;
+    data.settings.modules = {
+      bankAccounts: bankAccounts,
+      statementImport: bankAccounts && $("#module-statement-import").checked,
+      alerts: $("#module-alerts").checked,
+      dailyLimit: $("#module-daily-limit").checked,
+      weeklyLimit: $("#module-weekly-limit").checked,
+      interest: $("#module-interest").checked,
+      recurring: $("#module-recurring").checked,
+      categoryBudgets: $("#module-category-budgets").checked
+    };
+    data.settings.payday = { day: day, nextDate: nextDate };
+    markDirty("Zastosowano moduły programu.");
+    renderAll();
+    setPage("settings");
+  }
+
+  async function exportData() {
+    if (desktop) {
+      try {
+        var result = await desktop.data.export(data);
+        if (result && result.ok) showToast("Wyeksportowano kopię danych.");
+      } catch (error) {
+        showToast("Nie udało się wyeksportować kopii: " + (error.message || error));
+      }
+      return;
+    }
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "budzet-kopia-" + currentYear() + ".json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    showToast("Wyeksportowano kopię danych.");
+  }
+
+  async function importData(file) {
+    try {
+      var parsed;
+      if (desktop) {
+        var result = await desktop.data.import();
+        if (!result || result.canceled) return;
+        parsed = result.data;
+      } else {
+        if (!file) return;
+        parsed = JSON.parse(await file.text());
+      }
+      if (!parsed || !parsed.settings || !Array.isArray(parsed.goals) || !Array.isArray(parsed.debts) || !Array.isArray(parsed.transactions)) {
+        throw new Error("Nieprawidłowy format pliku");
+      }
+      data = normalizeData(parsed);
+      state.month = currentYear() === new Date().getFullYear() ? new Date().getMonth() : 0;
+      state.planMonth = state.month;
+      applyTheme();
+      markDirty("Wczytano kopię.");
+      renderAll();
+      setPage("dashboard");
+    } catch (error) {
+      showToast("Nie udało się wczytać tej kopii: " + (error.message || error));
+    } finally {
+      $("#import-file").value = "";
+    }
+  }
+
+  async function checkForUpdates() {
+    if (!desktop) return;
+    try {
+      updateStatus = await desktop.updater.check();
+      renderUpdateStatus();
+    } catch (error) {
+      showToast("Nie udało się sprawdzić aktualizacji.");
+    }
+  }
+
+  function resetData() {
+    if (!window.confirm("Wyczyścić wszystkie operacje, cele, długi i ustawienia? Przed kontynuacją warto wyeksportować kopię.")) return;
+    data = freshData();
+    state.month = currentYear() === new Date().getFullYear() ? new Date().getMonth() : 0;
+    state.planMonth = state.month;
+    applyTheme();
+    markDirty("Wyczyszczono dane.");
+    renderAll();
+    setPage("dashboard");
+  }
+
+  function handleDocumentClick(event) {
+    var profileButton = event.target.closest("[data-open-profile]");
+    if (profileButton) {
+      openSelectedProfile(profileButton.getAttribute("data-open-profile"));
+      return;
+    }
+    var nav = event.target.closest("[data-view]");
+    if (nav) {
+      setPage(nav.getAttribute("data-view"));
+      return;
+    }
+    var go = event.target.closest("[data-go]");
+    if (go) {
+      setPage(go.getAttribute("data-go"));
+      return;
+    }
+    var month = event.target.closest("[data-month]");
+    if (month) {
+      state.month = Number(month.getAttribute("data-month"));
+      renderMonths();
+      return;
+    }
+    var planMonth = event.target.closest("[data-plan-month]");
+    if (planMonth) {
+      state.planMonth = Number(planMonth.getAttribute("data-plan-month"));
+      renderPlan();
+      return;
+    }
+    var close = event.target.closest("[data-close-dialog]");
+    if (close) {
+      closeDialog(close.getAttribute("data-close-dialog"));
+      return;
+    }
+    var editTransactionButton = event.target.closest("[data-edit-transaction]");
+    if (editTransactionButton) {
+      openTransactionDialog(editTransactionButton.getAttribute("data-edit-transaction"));
+      return;
+    }
+    var deleteTransactionButton = event.target.closest("[data-delete-transaction]");
+    if (deleteTransactionButton) {
+      deleteTransaction(deleteTransactionButton.getAttribute("data-delete-transaction"));
+      return;
+    }
+    var editGoalButton = event.target.closest("[data-edit-goal]");
+    if (editGoalButton) {
+      openGoalDialog(editGoalButton.getAttribute("data-edit-goal"));
+      return;
+    }
+    var deleteGoalButton = event.target.closest("[data-delete-goal]");
+    if (deleteGoalButton) {
+      deleteGoal(deleteGoalButton.getAttribute("data-delete-goal"));
+      return;
+    }
+    var payGoalButton = event.target.closest("[data-pay-goal]");
+    if (payGoalButton) {
+      setPage("months");
+      openTransactionDialog(null, "goal", payGoalButton.getAttribute("data-pay-goal"));
+      return;
+    }
+    var withdrawGoalButton = event.target.closest("[data-withdraw-goal]");
+    if (withdrawGoalButton) {
+      setPage("months");
+      openTransactionDialog(null, "goal_withdraw", withdrawGoalButton.getAttribute("data-withdraw-goal"));
+      return;
+    }
+    var goalHistoryButton = event.target.closest("[data-history-goal]");
+    if (goalHistoryButton) {
+      openTargetHistory("goal", goalHistoryButton.getAttribute("data-history-goal"));
+      return;
+    }
+    var editDebtButton = event.target.closest("[data-edit-debt]");
+    if (editDebtButton) {
+      openDebtDialog(editDebtButton.getAttribute("data-edit-debt"));
+      return;
+    }
+    var deleteDebtButton = event.target.closest("[data-delete-debt]");
+    if (deleteDebtButton) {
+      deleteDebt(deleteDebtButton.getAttribute("data-delete-debt"));
+      return;
+    }
+   
