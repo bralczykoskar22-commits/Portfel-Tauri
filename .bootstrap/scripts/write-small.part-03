@@ -1,0 +1,143 @@
+  setValue(window, "#transaction-type", "transfer", "change");
+  const accountOptions = Array.from(window.document.querySelectorAll("#transaction-account option"));
+  const bankOption = accountOptions.find(option => /Konto osobiste/.test(option.textContent));
+  const cashOption = accountOptions.find(option => /Gotówka/.test(option.textContent));
+  assert.ok(bankOption?.value, "Konto bankowe nie pojawiło się w operacji");
+  assert.ok(cashOption?.value, "Gotówka nie pojawiła się w operacji");
+  setValue(window, "#transaction-account", bankOption.value);
+  setValue(window, "#transaction-to-account", cashOption.value);
+  setValue(window, "#transaction-amount", "250");
+  setValue(window, "#transaction-description", "Wypłata z bankomatu");
+  submit(window, "#transaction-form");
+  assert.match(window.document.querySelector("#transactions-table").textContent, /Wypłata z bankomatu/);
+
+  window.document.querySelector('[data-view="debts"]').click();
+  window.document.querySelector("#add-debt").click();
+  assert.ok(window.document.querySelector("#debt-interest-enabled"));
+  assert.equal(window.document.querySelector("#debt-interest-enabled").closest("label").hidden, false);
+  window.document.querySelector('[data-close-dialog="debt-dialog"]').click();
+
+  window.document.querySelector('[data-view="plan"]').click();
+  window.document.querySelector("#add-recurring").click();
+  setValue(window, "#recurring-name", "Wypłata testowa");
+  setValue(window, "#recurring-type", "income");
+  setValue(window, "#recurring-amount", "6000");
+  setValue(window, "#recurring-cadence", "monthly", "change");
+  setValue(window, "#recurring-day", "20");
+  setValue(window, "#recurring-start", "2026-07-20");
+  assert.equal(window.document.querySelector("#recurring-no-end").checked, true);
+  assert.equal(window.document.querySelector("#recurring-end").disabled, true);
+  submit(window, "#recurring-form");
+  assert.match(window.document.querySelector("#recurring-list").textContent, /bezterminowo/);
+  assert.match(window.document.querySelector("#recurring-confirmations-list").textContent, /Przewidywana: 6000,00/);
+
+  window.document.querySelector("#recurring-confirmations-list [data-post-recurring]").click();
+  assert.equal(window.document.querySelector("#recurring-confirmation").hidden, false);
+  assert.match(window.document.querySelector("#recurring-expected-amount").textContent, /6000,00/);
+  setValue(window, "#transaction-amount", "6214.37");
+  submit(window, "#transaction-form");
+  window.document.querySelector('[data-view="plan"]').click();
+  assert.match(window.document.querySelector("#recurring-confirmations-list").textContent, /Faktyczna: 6214,37/);
+  assert.match(window.document.querySelector("#recurring-confirmations-list").textContent, /różnica \+214,37/);
+
+  pauseNextSave = true;
+  window.document.querySelector("#save-button").click();
+  await waitFor(
+    () => typeof releaseSave === "function",
+    "Przycisk Zapisz nie wywołał Tauri"
+  );
+
+  const logoutCallsDuringSave = calls.filter(call => call.command === "logout_profile").length;
+  window.document.querySelector("#switch-profile").click();
+  assert.equal(window.document.querySelector("#profile-screen").hidden, true);
+  assert.equal(calls.filter(call => call.command === "logout_profile").length, logoutCallsDuringSave);
+
+  window.document.querySelector('[data-view="months"]').click();
+  window.document.querySelector("#add-transaction").click();
+  setValue(window, "#transaction-type", "expense", "change");
+  setValue(window, "#transaction-account", bankOption.value);
+  setValue(window, "#transaction-amount", "10");
+  setValue(window, "#transaction-description", "Zmiana podczas zapisu");
+  submit(window, "#transaction-form");
+  releaseSave();
+
+  await waitFor(
+    () => window.document.querySelector("#save-label").textContent === "Niezapisane zmiany",
+    "Zmiana wykonana podczas zapisu została błędnie uznana za zapisaną"
+  );
+  assert.equal(stored.transactions.length, 2);
+
+  window.document.querySelector("#save-button").click();
+  await waitFor(
+    () => calls.filter(call => call.command === "save_data").length === 2,
+    "Drugi zapis nie został wywołany"
+  );
+  await waitFor(
+    () => window.document.querySelector("#save-label").textContent === "Wszystko zapisane",
+    "Interfejs nie potwierdził drugiego zapisu"
+  );
+
+  assert.equal(stored.version, 5);
+  assert.equal(stored.settings.modules.bankAccounts, true);
+  assert.equal(stored.settings.modules.statementImport, true);
+  assert.equal(stored.accounts.length, 2);
+  assert.equal(stored.accounts[1].name, "Konto osobiste");
+  assert.equal(stored.transactions.length, 3);
+  assert.equal(stored.transactions[0].type, "transfer");
+  assert.equal(stored.transactions[0].accountId, bankOption.value);
+  assert.equal(stored.transactions[0].toAccountId, cashOption.value);
+  assert.equal(stored.transactions[1].recurringId, stored.recurring[0].id);
+  assert.equal(stored.transactions[1].expectedAmount, 6000);
+  assert.equal(stored.transactions[1].amount, 6214.37);
+  assert.equal(stored.transactions[2].description, "Zmiana podczas zapisu");
+  assert.equal(snapshots.length, 2);
+
+  const preview = await window.portfelDesktop.statements.preview("bank-1", ["hash-1"]);
+  assert.equal(preview.fileName, "konto.csv");
+  const previewCall = calls.find(call => call.command === "preview_statement");
+  assert.deepEqual(previewCall.args, {
+    options: { accountId: "bank-1", existingFingerprints: ["hash-1"] }
+  });
+
+  assert.ok(calls.some(call => call.command === "list_profiles"));
+  assert.ok(calls.some(call => call.command === "login_profile"));
+  assert.ok(calls.some(call => call.command === "app_info"));
+  assert.ok(calls.some(call => call.command === "updater_status"));
+  assert.ok(calls.some(call => call.command === "list_backups"));
+
+  window.document.querySelector("#switch-profile").click();
+  await waitFor(
+    () => window.document.querySelector("#profile-screen")?.hidden === false,
+    "Ekran kont nie pojawił się po zmianie profilu"
+  );
+  window.document.querySelector("#add-profile").click();
+  setValue(window, "#profile-name", "Budżet domowy");
+  setValue(window, "#profile-password", "1234");
+  setValue(window, "#profile-password-repeat", "1234");
+  submit(window, "#profile-create-form");
+  await waitFor(
+    () => window.document.querySelector("#current-profile-name")?.textContent === "Budżet domowy",
+    "Nowe konto nie zostało otwarte"
+  );
+  const createProfileCall = calls.find(call => call.command === "create_profile");
+  assert.deepEqual(createProfileCall.args, {
+    options: { name: "Budżet domowy", password: "1234" }
+  });
+
+  const ids = Array.from(window.document.querySelectorAll("[id]"), element => element.id);
+  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+  assert.deepEqual(duplicates, []);
+
+  await window.happyDOM.abort();
+});
+
+test("pliki interfejsu mają oczekiwane, kontrolowane wersje", async () => {
+  const [tauriApp, tauriStyles] = await Promise.all([
+    fs.readFile(new URL("src/assets/app.js", root), "utf8"),
+    fs.readFile(new URL("src/assets/styles.css", root), "utf8")
+  ]);
+  const digest = value => createHash("sha256").update(value.replace(/\r\n/g, "\n")).digest("hex");
+  assert.equal(digest(tauriApp), "e3ae489e545128eaafa9ed5167de3e312af5a764340d93b33c4064663ec51c76");
+  assert.equal(digest(tauriStyles), "9db7444dca41aec65ae6eeb2f51d3edcec9c63f8fa9d87b7df65030524d22318");
+});
+PORTFEL_EOF_19
