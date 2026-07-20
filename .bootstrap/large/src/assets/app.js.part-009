@@ -1,0 +1,117 @@
+" KB</span></div><button class=\"text-button\" type=\"button\" data-restore-backup=\"" + escapeHTML(backup.name) + "\">Przywróć</button></div>";
+    }).join("");
+  }
+
+  function buildMonthlyReport() {
+    var stats = monthStats(state.month);
+    var list = monthTransactions(state.month);
+    var plan = plannedItemsForMonth(state.month);
+    return "<div class=\"print-head\"><div><span>Lokalny budżet gotówkowy</span><h1>" + MONTHS[state.month] + " " + currentYear() + "</h1></div><strong>Raport miesięczny</strong></div>" +
+      "<div class=\"print-metrics\"><div><span>Wpływy</span><strong>" + escapeHTML(money(stats.income)) + "</strong></div><div><span>Wydatki</span><strong>" + escapeHTML(money(stats.expense)) + "</strong></div><div><span>Cele i długi netto</span><strong>" + escapeHTML(money(stats.targets)) + "</strong></div></div>" +
+      "<h2>Operacje</h2><table><thead><tr><th>Data</th><th>Rodzaj</th><th>Opis</th><th>Kwota</th></tr></thead><tbody>" + (list.length ? list.map(function (transaction) { return "<tr><td>" + escapeHTML(formattedDate(transaction.date)) + "</td><td>" + escapeHTML(TYPE_LABELS[transaction.type] || transaction.type) + "</td><td>" + escapeHTML(transaction.description || targetName(transaction)) + "</td><td>" + escapeHTML(money(transaction.amount)) + "</td></tr>"; }).join("") : "<tr><td colspan=\"4\">Brak operacji</td></tr>") + "</tbody></table>" +
+      "<h2>Plan miesiąca</h2><table><thead><tr><th>Zadanie</th><th>Plan</th><th>Wykonano</th><th>Status</th></tr></thead><tbody>" + (plan.length ? plan.map(function (item) { return "<tr><td>" + escapeHTML(item.title) + "</td><td>" + escapeHTML(money(item.planned)) + "</td><td>" + escapeHTML(money(item.actual)) + "</td><td>" + (item.complete ? "Wykonane" : "Brakuje " + escapeHTML(money(item.remaining))) + "</td></tr>"; }).join("") : "<tr><td colspan=\"4\">Brak zaplanowanych zadań</td></tr>") + "</tbody></table>";
+  }
+
+  function buildAnnualReport() {
+    var rows = forecastRows();
+    return "<div class=\"print-head\"><div><span>Lokalny budżet gotówkowy</span><h1>Rok " + currentYear() + "</h1></div><strong>Raport roczny</strong></div>" +
+      "<h2>Podsumowanie i prognoza</h2><table><thead><tr><th>Miesiąc</th><th>Wpływy</th><th>Wydatki</th><th>Cele i długi</th><th>Prognozowane saldo</th></tr></thead><tbody>" + rows.map(function (row) { var stats = monthStats(row.month); return "<tr><td>" + MONTHS[row.month] + "</td><td>" + escapeHTML(money(stats.income)) + "</td><td>" + escapeHTML(money(stats.expense)) + "</td><td>" + escapeHTML(money(stats.targets)) + "</td><td>" + escapeHTML(money(row.balance)) + "</td></tr>"; }).join("") + "</tbody></table>" +
+      "<h2>Cele</h2><table><thead><tr><th>Nazwa</th><th>Cel</th><th>Odłożono</th><th>Zostało</th></tr></thead><tbody>" + (data.goals.length ? data.goals.map(function (goal) { return "<tr><td>" + escapeHTML(goal.name) + "</td><td>" + escapeHTML(money(goal.target)) + "</td><td>" + escapeHTML(money(goalSaved(goal))) + "</td><td>" + escapeHTML(money(goalRemaining(goal))) + "</td></tr>"; }).join("") : "<tr><td colspan=\"4\">Brak celów</td></tr>") + "</tbody></table>" +
+      "<h2>Długi</h2><table><thead><tr><th>Nazwa</th><th>Kwota</th><th>Spłacono</th><th>Zostało</th></tr></thead><tbody>" + (data.debts.length ? data.debts.map(function (debt) { return "<tr><td>" + escapeHTML(debt.name) + "</td><td>" + escapeHTML(money(debt.total)) + "</td><td>" + escapeHTML(money(debtPaid(debt))) + "</td><td>" + escapeHTML(money(debtRemaining(debt))) + "</td></tr>"; }).join("") : "<tr><td colspan=\"4\">Brak długów</td></tr>") + "</tbody></table>";
+  }
+
+  function printReport(kind) {
+    var node = $("#print-report");
+    node.innerHTML = kind === "month" ? buildMonthlyReport() : buildAnnualReport();
+    node.hidden = false;
+    document.body.classList.add("is-printing");
+    window.setTimeout(function () {
+      if (typeof window.print === "function") window.print();
+      window.setTimeout(function () {
+        document.body.classList.remove("is-printing");
+        node.hidden = true;
+      }, 300);
+    }, 30);
+  }
+
+  function accountTypeLabel(type) {
+    if (type === "bank") return "Konto osobiste";
+    if (type === "savings") return "Konto oszczędnościowe";
+    return "Gotówka";
+  }
+
+  function accountVisual(type) {
+    if (type === "bank") return { icon: "B", color: "#3b82f6" };
+    if (type === "savings") return { icon: "S", color: "#8b5cf6" };
+    return { icon: "G", color: "#14b8a6" };
+  }
+
+  function accountBalanceDate() {
+    var today = startOfToday();
+    if (today.getFullYear() === currentYear()) return isoDate(today);
+    return currentYear() + "-12-31";
+  }
+
+  function renderAccounts() {
+    var accounts = activeAccounts(true);
+    var throughDate = accountBalanceDate();
+    var total = accounts.reduce(function (sum, account) { return sum + accountBalance(account, throughDate); }, 0);
+    var cash = accounts.filter(function (account) { return account.type === "cash"; }).reduce(function (sum, account) { return sum + accountBalance(account, throughDate); }, 0);
+    var bank = accounts.filter(function (account) { return account.type !== "cash"; }).reduce(function (sum, account) { return sum + accountBalance(account, throughDate); }, 0);
+    var imported = data.transactions.filter(function (transaction) { return transaction.source === "statement"; }).length;
+    $("#accounts-summary").innerHTML =
+      "<div class=\"summary-item\"><span>Wszystkie środki</span><strong>" + escapeHTML(money(total)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Gotówka</span><strong>" + escapeHTML(money(cash)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Konta bankowe</span><strong>" + escapeHTML(money(bank)) + "</strong></div>" +
+      "<div class=\"summary-item\"><span>Zaimportowane operacje</span><strong>" + imported + "</strong></div>";
+    $("#import-statement").hidden = !modules().statementImport;
+    var node = $("#accounts-grid");
+    if (!accounts.length) {
+      node.innerHTML = "<div class=\"empty-targets\"><div><strong>Brak kont</strong><span>Dodaj gotówkę albo konto bankowe, aby przypisywać do niego operacje.</span></div></div>";
+      return;
+    }
+    node.innerHTML = accounts.map(function (account, index) {
+      var visual = accountVisual(account.type);
+      var balance = accountBalance(account, throughDate);
+      var movement = balance - accountOpening(account);
+      var sourceCount = data.transactions.filter(function (transaction) { return transaction.accountId === account.id || transaction.toAccountId === account.id; }).length;
+      return "<article class=\"account-card " + (account.active === false ? "is-inactive" : "") + "\" style=\"--account-color:" + visual.color + ";animation-delay:" + (index * .05) + "s\">" +
+        "<div class=\"account-head\"><div><div class=\"account-icon\">" + visual.icon + "</div><div><h3>" + escapeHTML(account.name) + "</h3><p>" + escapeHTML(accountTypeLabel(account.type)) + (account.active === false ? " • nieaktywne" : "") + "</p></div></div>" +
+        "<div class=\"row-actions\"><button class=\"tiny-button\" type=\"button\" data-edit-account=\"" + escapeHTML(account.id) + "\" aria-label=\"Edytuj konto\"><svg viewBox=\"0 0 24 24\"><path d=\"m4 20 4-1 11-11-3-3L5 16l-1 4Z\"></path></svg></button>" +
+        "<button class=\"tiny-button is-delete\" type=\"button\" data-delete-account=\"" + escapeHTML(account.id) + "\" aria-label=\"Usuń konto\"><svg viewBox=\"0 0 24 24\"><path d=\"M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13\"></path></svg></button></div></div>" +
+        "<div class=\"account-balance-row\"><div><span>Aktualne saldo</span><strong class=\"" + (balance < 0 ? "negative" : "") + "\">" + escapeHTML(money(balance)) + "</strong></div><span>" + (movement >= 0 ? "+" : "") + escapeHTML(money(movement)) + " w roku</span></div>" +
+        "<div class=\"account-footer\"><span>Saldo 1 stycznia: " + escapeHTML(money(accountOpening(account))) + "</span><span>" + sourceCount + (sourceCount === 1 ? " operacja" : " operacji") + "</span></div></article>";
+    }).join("");
+  }
+
+  function renderUpdateStatus() {
+    var status = updateStatus || { state: "disabled", message: "Kanał aktualizacji zostanie aktywowany przy publikacji programu." };
+    var labels = {
+      disabled: "Nieaktywne", idle: "Gotowe", checking: "Sprawdzanie…", available: "Pobieranie…",
+      downloaded: "Gotowa", current: "Aktualna", error: "Błąd"
+    };
+    $("#desktop-app-version").textContent = appInfo && appInfo.version ? appInfo.version : "wersja lokalna";
+    $("#update-status").textContent = labels[status.state] || "Status";
+    $("#update-status").className = "status-badge " + (status.state === "error" ? "is-overdue" : status.state === "downloaded" || status.state === "current" ? "is-done" : "");
+    $("#update-message").textContent = status.message || "";
+    $("#install-update").hidden = status.state !== "downloaded";
+    $("#check-updates").disabled = status.state === "disabled" || status.state === "checking" || status.state === "available";
+  }
+
+  function applyModuleVisibility() {
+    var config = modules();
+    $("#accounts-nav").hidden = !config.bankAccounts;
+    $("#import-statement").hidden = !config.bankAccounts || !config.statementImport;
+    $("#recurring-module-card").hidden = !config.recurring;
+    $("#budget-module-card").hidden = !config.categoryBudgets;
+    $("#debt-interest-enabled").closest("label").hidden = !config.interest;
+    var transferOption = $("#transaction-type option[value=\"transfer\"]");
+    if (transferOption) transferOption.hidden = !config.bankAccounts;
+    if (state.page === "accounts" && !config.bankAccounts) setPage("dashboard");
+  }
+
+  function renderSettings() {
+    var balance = yearBalance();
+    var cashAccount = mainCashAccount();
+    $("#settings-year").value = currentYear();
+    $("#settings-available").value = cashAccount && cashAccount.openingBalances[String(currentYear())] != null ? number(cashAccount.openingBalances[String(currentYear(
