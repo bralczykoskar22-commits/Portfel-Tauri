@@ -1,0 +1,202 @@
+turn;
+    }
+    activeProfile = { id: "browser", name: "Moje konto", hasPassword: false };
+    $("#current-profile-name").textContent = activeProfile.name;
+    $("#current-profile-initial").textContent = profileInitial(activeProfile.name);
+    loadFromFile();
+  }
+
+  async function loadBackups(silent) {
+    try {
+      var result;
+      if (desktop) {
+        result = await desktop.data.listBackups();
+      } else {
+        var response = await fetch(BACKUPS_URL, { cache: "no-store" });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Błąd listy kopii");
+      }
+      if (!result || !result.ok) throw new Error(result && result.error || "Błąd listy kopii");
+      backups = Array.isArray(result.backups) ? result.backups : [];
+      if (data && $("#backups-list")) renderBackups();
+    } catch (error) {
+      backups = [];
+      if (data && $("#backups-list")) renderBackups("Nie udało się odczytać kopii zapasowych.");
+      if (!silent) showToast("Nie udało się odświeżyć kopii zapasowych.");
+    }
+  }
+
+  async function restoreBackup(name) {
+    var question = dirty
+      ? "Masz niezapisane zmiany — zostaną utracone. Przywrócić wybraną kopię?"
+      : "Przywrócić tę kopię? Obecny plik zostanie wcześniej zabezpieczony.";
+    if (!window.confirm(question)) return;
+    try {
+      var result;
+      if (desktop) {
+        result = await desktop.data.restoreBackup(name);
+      } else {
+        var response = await fetch(RESTORE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name })
+        });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Błąd przywracania");
+      }
+      if (!result || !result.ok) throw new Error(result && result.error || "Błąd przywracania");
+      await loadFromFile();
+      showToast("Przywrócono wybraną kopię danych.");
+    } catch (error) {
+      showToast("Nie udało się przywrócić kopii: " + error.message);
+    }
+  }
+
+  function showToast(message) {
+    var toast = $("#toast");
+    toast.textContent = message;
+    toast.hidden = false;
+    if (toastTimer) window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () { toast.hidden = true; }, 3200);
+  }
+
+  function applyTheme() {
+    document.documentElement.setAttribute("data-theme", data.settings.theme === "dark" ? "dark" : "light");
+  }
+
+  function toggleTheme() {
+    data.settings.theme = data.settings.theme === "dark" ? "light" : "dark";
+    applyTheme();
+    markDirty();
+  }
+
+  function setPage(page) {
+    if (!PAGE_META[page]) return;
+    if (page === "accounts" && !modules().bankAccounts) page = "dashboard";
+    state.page = page;
+    $$('[data-page]').forEach(function (panel) {
+      var visible = panel.getAttribute("data-page") === page;
+      panel.hidden = !visible;
+      panel.classList.toggle("is-visible", visible);
+    });
+    $$(".nav-button[data-view]").forEach(function (button) {
+      button.classList.toggle("is-active", button.getAttribute("data-view") === page);
+    });
+    $("#page-title").textContent = PAGE_META[page][0];
+    $("#page-eyebrow").textContent = PAGE_META[page][1];
+    $("#sidebar").classList.remove("is-open");
+    $("#mobile-backdrop").hidden = true;
+    if (page === "dashboard") renderDashboard();
+    if (page === "months") renderMonths();
+    if (page === "goals") renderGoals();
+    if (page === "debts") renderDebts();
+    if (page === "plan") renderPlan();
+    if (page === "analytics") renderAnalytics();
+    if (page === "accounts") renderAccounts();
+    if (page === "settings") renderSettings();
+  }
+
+  function renderNavCounts() {
+    $("#goals-nav-count").textContent = data.goals.filter(function (goal) { return goalRemaining(goal) > 0; }).length;
+    $("#debts-nav-count").textContent = data.debts.filter(function (debt) { return debtRemaining(debt) > 0; }).length;
+    $("#accounts-nav-count").textContent = data.accounts.filter(function (account) { return account.active !== false; }).length;
+    $("#accounts-nav").hidden = !modules().bankAccounts;
+  }
+
+  function renderAlerts() {
+    if (!modules().alerts) {
+      $("#deadline-alerts").innerHTML = "";
+      return;
+    }
+    var alerts = [];
+    data.goals.forEach(function (goal) {
+      var plan = goalPlan(goal);
+      var info = deadlineInfo(goal.deadline, plan.remaining <= 0);
+      if (plan.impossible) {
+        alerts.push({ kind: "Cel", name: goal.name, priority: 3, message: plan.capExceeded ? "Wymagana wpłata przekracza ustawione maksimum." : "Brak kolejnych terminów wpłat przed końcem celu.", page: "goals" });
+      } else if (info.priority) {
+        alerts.push({ kind: "Cel", name: goal.name, priority: info.priority, message: info.text + " • pozostało " + money(plan.remaining), page: "goals" });
+      } else if (plan.paceClass === "is-behind") {
+        alerts.push({ kind: "Cel", name: goal.name, priority: 1, message: plan.paceText + " • zalecana wpłata " + money(plan.recommended), page: "goals" });
+      }
+    });
+    data.debts.forEach(function (debt) {
+      var plan = debtPlan(debt);
+      var info = deadlineInfo(debt.deadline, plan.remaining <= 0);
+      if (plan.impossible) {
+        alerts.push({ kind: "Dług", name: debt.name, priority: 3, message: "Termin minął lub nie ma kolejnej raty w harmonogramie.", page: "debts" });
+      } else if (info.priority) {
+        alerts.push({ kind: "Dług", name: debt.name, priority: info.priority, message: info.text + " • zostało " + money(plan.remaining), page: "debts" });
+      }
+    });
+    (modules().categoryBudgets ? data.budgets : []).forEach(function (budget) {
+      var spent = categorySpent(budget.category, state.month);
+      if (spent > number(budget.limit) + .0001) {
+        alerts.push({ kind: "Koperta", name: budget.category, priority: 2, message: "Limit przekroczony o " + money(spent - number(budget.limit)), page: "plan" });
+      }
+    });
+    var today = startOfToday();
+    if (currentYear() === today.getFullYear()) {
+      plannedItemsForMonth(today.getMonth()).forEach(function (item) {
+        if (!item.complete && item.date.getTime() < today.getTime()) {
+          alerts.push({ kind: "Plan", name: item.title, priority: 2, message: "Termin minął • do zaksięgowania " + money(item.remaining), page: "months" });
+        }
+      });
+    }
+    alerts.sort(function (a, b) { return b.priority - a.priority; });
+    var node = $("#deadline-alerts");
+    node.innerHTML = alerts.map(function (alert) {
+      return "<div class=\"alert " + (alert.priority >= 2 ? "is-overdue" : "") + "\">" +
+        "<div class=\"alert-main\"><div class=\"alert-icon\">!</div><div><strong>" + escapeHTML(alert.kind + ": " + alert.name) + "</strong>" +
+        "<span>" + escapeHTML(alert.message) + "</span></div></div>" +
+        "<button class=\"text-button\" type=\"button\" data-go=\"" + alert.page + "\">Sprawdź</button></div>";
+    }).join("");
+  }
+
+  function nextPaydayDate() {
+    var today = startOfToday();
+    var exact = dateFromISO(data.settings.payday && data.settings.payday.nextDate);
+    if (exact && exact.getTime() >= today.getTime()) return exact;
+    var day = Math.min(31, Math.max(1, Math.round(number(data.settings.payday && data.settings.payday.day) || 10)));
+    var candidate = clampDate(today.getFullYear(), today.getMonth(), day);
+    if (candidate.getTime() <= today.getTime()) candidate = clampDate(today.getFullYear(), today.getMonth() + 1, day);
+    return candidate;
+  }
+
+  function renderSpendingLimits() {
+    var node = $("#spending-limits");
+    if (!modules().dailyLimit && !modules().weeklyLimit) {
+      node.hidden = true;
+      node.innerHTML = "";
+      return;
+    }
+    var today = startOfToday();
+    if (today.getFullYear() !== currentYear()) {
+      node.hidden = true;
+      return;
+    }
+    var available = activeAccounts().filter(function (account) { return account.includeInSpendingLimit !== false; }).reduce(function (sum, account) {
+      return sum + accountBalance(account, isoDate(today));
+    }, 0);
+    var payday = nextPaydayDate();
+    var days = Math.max(1, Math.ceil((payday.getTime() - today.getTime()) / 86400000));
+    var months = {};
+    var cursor = startOfMonth(today.getFullYear(), today.getMonth());
+    var paydayMonth = startOfMonth(payday.getFullYear(), payday.getMonth());
+    while (cursor.getTime() <= paydayMonth.getTime()) {
+      if (cursor.getFullYear() === currentYear()) months[cursor.getMonth()] = true;
+      cursor = startOfMonth(cursor.getFullYear(), cursor.getMonth() + 1);
+    }
+    var obligations = Object.keys(months).reduce(function (sum, month) {
+      return sum + plannedItemsForMonth(Number(month)).reduce(function (monthSum, item) {
+        if (item.complete || item.remaining <= 0 || item.date.getTime() < today.getTime() || item.date.getTime() >= payday.getTime()) return monthSum;
+        if (item.kind === "recurring" && item.direction === "income") return monthSum;
+        return monthSum + item.remaining;
+      }, 0);
+    }, 0);
+    var spendable = Math.max(0, available - obligations);
+    var daily = spendable / days;
+    var cards = [];
+    if (modules().dailyLimit) cards.push("<article class=\"limit-card\"><div class=\"limit-icon\">D</div><div><span>Bezpiecznie dzisiaj</span><strong>" + escapeHTML(money(daily)) + "</strong><small>przez " + days + " dni do wypłaty</small></div></article>");
+    if (modules().weeklyLimit) cards.push("<article class=\"limit-card\"><div class=\"limit-icon\">7</div><div><span>Limit na 7 dni</span><strong>" + escapeHTML(money(daily * Math.min(7, days))) + "</strong><small>po odjęciu zaplanowanych płatności</small></div></article>");
+    cards.push("<article class=\"limit-card\"><div class=\"limit-icon\">→</div><div><span>Następna wypłata</span><strong>" + escapeHTML(formattedDate(isoDate(payday))) + "</strong><small>Do wydania " + escapeHTML(money(spendable)) + " • plan " + escapeHTML(money(obligations)) + "</small></div>
