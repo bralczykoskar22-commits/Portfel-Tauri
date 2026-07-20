@@ -18,13 +18,14 @@ jobs:
 
     steps:
       - name: Pobierz kod
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
+          registry-url: https://registry.npmjs.org
 
       - name: Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -35,7 +36,10 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Zależności
-        run: npm ci
+        shell: pwsh
+        run: |
+          npm config set registry https://registry.npmjs.org/
+          npm ci --no-audit --fund=false --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
       - name: Test interfejsu
         run: npm test
